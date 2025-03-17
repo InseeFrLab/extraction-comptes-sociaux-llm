@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MODEL_NAME="mistralai/Ministral-8B-Instruct-2410"
+MODEL_NAME="google/gemma-3-27b-it"
 LOCAL_PATH="/home/onyxia/.cache/huggingface/hub"
 
 MC_PATH=s3/projet-models-hf/diffusion/hf_hub/$MODEL_NAME
