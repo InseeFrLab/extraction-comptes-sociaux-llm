@@ -6,4 +6,8 @@ huggingface-cli login
 
 pip install git+https://github.com/huggingface/transformers.git
 
-vllm serve google/gemma-3-12b-it --max_model_len 60000
+export HF_HOME="/home/onyxia/.cache/huggingface/hub"
+
+sh fetch_model_s3.sh
+
+vllm serve google/gemma-3-27b-it --max_model_len 60000
