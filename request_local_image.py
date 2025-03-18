@@ -5,7 +5,7 @@ from vllm.utils import FlexibleArgumentParser
 # Modify OpenAI's API key and API base to use vLLM's API server.
 openai_api_key = "EMPTY"
 openai_api_base = "http://localhost:8000/v1"
-IMAGE = "vinci.png"
+IMAGE = "lvmh0-1.png"
 PROMPT = \
     """I am providing an image that contains a complex table. Please transcribe this table into CSV format by following these detailed steps:
 
@@ -22,9 +22,9 @@ PROMPT = \
     If the table includes merged cells or multiple header rows, resolve these by consolidating them into your single header row. For cells that span multiple columns, duplicate or adjust the content as needed so that each column in your header is filled appropriately.
 
     Output Requirements:
-    Output only the CSV data, starting with the header row, followed by one row for each table row. Use commas to separate fields and ensure any text containing commas or special characters is properly quoted.
+    Output only the CSV data, starting with the header row, followed by one row for each table row. Use semicolon to separate fields and ensure any text containing commas or special characters is properly quoted.
 
-Please provide the final CSV output without any extra commentary or explanation."""
+Please provide the final CSV output without any extra commentary or explanation"""
 client = OpenAI(
     api_key=openai_api_key,
     base_url=openai_api_base,
@@ -33,11 +33,13 @@ client = OpenAI(
 models = client.models.list()
 model = models.data[0].id
 
+
 def encode_base64_content_from_file(file_path: str) -> str:
     """Encode the content of a local file to base64 format."""
     with open(file_path, "rb") as file:
         encoded = base64.b64encode(file.read()).decode("utf-8")
     return encoded
+
 
 # Single-image input inference using a locally stored image
 def run_single_image(image_path=IMAGE) -> None:
@@ -76,13 +78,16 @@ def run_single_image(image_path=IMAGE) -> None:
     result = chat_completion.choices[0].message.content
     print("Chat completion output from local image:", result)
 
+
 example_function_map = {
     "single-image": run_single_image,
 }
 
+
 def main(args) -> None:
     # Use the provided image path from command-line arguments.
     run_single_image(image_path=args.image_path)
+
 
 if __name__ == "__main__":
     parser = FlexibleArgumentParser(
