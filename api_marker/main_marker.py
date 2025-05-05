@@ -2,67 +2,63 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 import shutil
 import tempfile
-import subprocess
 import os
-import glob
 import json
-import fitz 
+
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.config.parser import ConfigParser
 
 app = FastAPI(
-    root_path="/proxy/8000"
+    root_path="/proxy/8000" # Parametrage du root path pour coller au proxy du ssp cloud
 )
 
 @app.post("/extract")
 def extract(pdf: UploadFile = File(...)):
+    # Vérification du type
     if pdf.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Invalid file type. PDF required.")
 
-    # Prepare temporary working directory
+    # Création d’un répertoire de travail temporaire
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Save uploaded PDF
+        # Sauvegarde du PDF
         input_pdf_path = os.path.join(tmpdir, pdf.filename)
         with open(input_pdf_path, "wb") as f:
             shutil.copyfileobj(pdf.file, f)
 
-        # Convert PDF to PNG 
+        # Configuration de Marker pour produire du JSON et forcer l’OCR + LLM
+        config = {
+            "output_format": "json",
+            "force_ocr": True,
+            #"use_llm": True,
+            #"llm_service": "marker.services.openai.OpenAIService",
+            #"openai_base_url": "https://llm.lab.sspcloud.fr/api/chat/completions",
+            #"openai_model": "google/gemma-3-27b-it",
+            #"openai_api_key": "",
+            "timeout": 99999,
+            # Vous pouvez ajouter ici d’autres options supportées par marker_single --help
+        }
+        parser = ConfigParser(config)
+
+        # Instanciation du converter
+        converter = PdfConverter(
+            config=parser.generate_config_dict(),
+            artifact_dict=create_model_dict(),
+            processor_list=parser.get_processors(),
+            renderer=parser.get_renderer(),
+            llm_service=parser.get_llm_service()
+        )
+
+        # Exécution de la conversion
         try:
-            doc = fitz.open(input_pdf_path)
-            page = doc.load_page(0)  # first page
-            pix = page.get_pixmap()
-            image_path = os.path.join(tmpdir, "page0.png")
-            pix.save(image_path)
+            rendered = converter(input_pdf_path)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to convert PDF to image: {e}")
+            raise HTTPException(status_code=500, detail=f"Marker conversion failed: {e}")
 
-        # Run external CLI command with generated image
-        cmd = [
-            "marker_single", image_path,
-            "--force_ocr",
-            "--use_llm",
-            "--llm_service", "marker.services.openai.OpenAIService",
-            "--openai_base_url", "https://projet-extraction-tableaux-vllm.user.lab.sspcloud.fr/v1",
-            "--openai_model", "google/gemma-3-27b-it",
-            "--openai_api_key", "",
-            "--timeout", "99999",
-            "--output_dir", tmpdir,
-            "--output_format", "json"
-        ]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"Extraction failed: {e.stderr}")
+        # Le rendu JSON complet
+        result = rendered.dict()
 
-        # Find output JSON file
-        json_files = glob.glob(os.path.join(tmpdir, "*.json"))
-        if not json_files:
-            raise HTTPException(status_code=500, detail="No output JSON generated.")
-
-        # Assuming single JSON
-        output_path = json_files[0]
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return JSONResponse(content=data)
+        return JSONResponse(content=result)
 
 if __name__ == "__main__":
     import uvicorn
