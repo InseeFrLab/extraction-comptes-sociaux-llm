@@ -8,7 +8,9 @@ import glob
 import json
 import fitz 
 
-app = FastAPI()
+app = FastAPI(
+    root_path="/proxy/8000"
+)
 
 @app.post("/extract")
 def extract(pdf: UploadFile = File(...)):
