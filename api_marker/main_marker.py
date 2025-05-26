@@ -30,13 +30,12 @@ def extract(pdf: UploadFile = File(...)):
         config = {
             "output_format": "json",
             "force_ocr": True,
-            #"use_llm": True,
-            #"llm_service": "marker.services.openai.OpenAIService",
-            #"openai_base_url": "https://llm.lab.sspcloud.fr/api/chat/completions",
-            #"openai_model": "google/gemma-3-27b-it",
-            #"openai_api_key": "",
+            "use_llm": True,
+            "llm_service": "marker.services.openai.OpenAIService",
+            "openai_base_url": "https://llm.lab.sspcloud.fr/api",
+            "openai_model": "gemma3:27b",
+            "openai_api_key": "",
             "timeout": 99999,
-            # Vous pouvez ajouter ici d’autres options supportées par marker_single --help
         }
         parser = ConfigParser(config)
 
