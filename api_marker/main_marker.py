@@ -10,7 +10,7 @@ from marker.models import create_model_dict
 from marker.config.parser import ConfigParser
 
 app = FastAPI(
-    root_path="/proxy/8000" # Parametrage du root path pour coller au proxy du ssp cloud
+    root_path="/proxy/8001" # Parametrage du root path pour coller au proxy du ssp cloud
 )
 
 @app.post("/extract")
@@ -61,4 +61,4 @@ def extract(pdf: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -178,7 +178,7 @@ def extract(siren: str, year: str = Query(..., description="Année du bilan à r
     fs = get_s3_fs()
     filename = f"{siren}_{year}.json"
 
-    if file_exists_s3(fs, filename):
+    if False : #file_exists_s3(fs, filename):
         logger.info(f"Le fichier {filename} existe déjà sur S3.")
         raw = fs.open(f"{AWS_S3_BUCKET}/{filename}", 'rb').read()
         data = json.loads(raw)
@@ -189,14 +189,14 @@ def extract(siren: str, year: str = Query(..., description="Année du bilan à r
         page = select_page(pdf)
         snippet = extract_page(pdf, page)
 
-        files = {"file": ("snippet.pdf", snippet, "application/pdf")}
+        files = {"pdf": ("snippet.pdf", snippet, "application/pdf")}
         r = requests.post(os.getenv("MARKER_API_URL"), files=files, timeout=60)
         if r.status_code != 200:
             logger.error("Marker error %s: %s", r.status_code, r.text)
             raise HTTPException(502, "Traitement Marker échoué")
         marker_data = r.json()
 
-        upload_to_s3(fs, filename, json.dumps({"page": page, "marker": marker_data}).encode())
+        #upload_to_s3(fs, filename, json.dumps({"page": page, "marker": marker_data}).encode())
         logger.info(f"Résultat {filename} ajouté à S3.")
 
     return ExtractionResponse(siren=siren, year=year, page=page, marker=marker_data)
