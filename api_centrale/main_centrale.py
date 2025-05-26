@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import fitz  # PyMuPDF
 import s3fs
+from PyPDF2 import PdfReader, PdfWriter
+from io import BytesIO
 
 # Charger .env
 load_dotenv()
@@ -148,13 +150,27 @@ def select_page(pdf: bytes) -> int:
 
 
 def extract_page(pdf_bytes: bytes, page_number: int) -> bytes:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    new_doc = fitz.open()
-    new_doc.insert_pdf(doc, from_page=page_number - 1, to_page=page_number - 1)
-    snippet = new_doc.write()
-    doc.close()
-    new_doc.close()
-    return snippet
+    """
+    Extrait une page spécifique d'un PDF sous forme d'un nouveau PDF.
+
+    :param pdf_bytes: Le PDF source en bytes
+    :param page_number: Le numéro de la page à extraire (0-indexed)
+    :return: Bytes du PDF résultant contenant seulement la page spécifiée
+    """
+    pdf_reader = PdfReader(BytesIO(pdf_bytes))
+
+    if page_number < 0 or page_number >= len(pdf_reader.pages):
+        raise ValueError("Invalid page number")
+
+    pdf_writer = PdfWriter()
+    pdf_writer.add_page(pdf_reader.pages[page_number])
+
+    output_stream = BytesIO()
+    pdf_writer.write(output_stream)
+
+    logger.info("Page extracted succesfully")
+    return output_stream.getvalue()
+
 
 # Endpoint extraction
 @app.get("/extract/{siren}", response_model=ExtractionResponse)
