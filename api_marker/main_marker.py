@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import os
 import json
+from dotenv import load_dotenv
 
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
@@ -34,7 +35,7 @@ def extract(pdf: UploadFile = File(...)):
             "llm_service": "marker.services.openai.OpenAIService",
             "openai_base_url": "https://llm.lab.sspcloud.fr/api",
             "openai_model": "gemma3:27b",
-            "openai_api_key": "",
+            "openai_api_key": os.getenv("LAB_LLM_API_KEY"),
             "timeout": 99999,
         }
         parser = ConfigParser(config)

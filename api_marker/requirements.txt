@@ -1,4 +1,5 @@
 python-multipart
+python-dotenv
 marker-pdf
 pymupdf
 PyPDF2
