@@ -137,7 +137,7 @@ def fetch_pdf_inpi(siren: str, year: str) -> bytes:
 def select_page(pdf: bytes) -> int:
     files = {"pdf_file": ("report.pdf", pdf, "application/pdf")}
     headers = {"accept": "application/json"}
-    r = requests.post(os.getenv("LEGACY_SELECTOR_URL"), files=files, headers=headers, timeout=30)
+    r = requests.post(os.getenv("LEGACY_SELECTOR_URL"), files=files, headers=headers, timeout=120)
     if r.status_code != 200:
         logger.error("Selector error %s: %s", r.status_code, r.text)
         raise HTTPException(502, "Sélection de la page échouée")
@@ -190,7 +190,7 @@ def extract(siren: str, year: str = Query(..., description="Année du bilan à r
         snippet = extract_page(pdf, page)
 
         files = {"pdf": ("snippet.pdf", snippet, "application/pdf")}
-        r = requests.post(os.getenv("MARKER_API_URL"), files=files, timeout=60)
+        r = requests.post(os.getenv("MARKER_API_URL"), files=files, timeout=120)
         if r.status_code != 200:
             logger.error("Marker error %s: %s", r.status_code, r.text)
             raise HTTPException(502, "Traitement Marker échoué")

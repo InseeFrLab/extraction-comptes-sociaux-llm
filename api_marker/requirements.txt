@@ -1,3 +1,4 @@
 python-multipart
-marker[full]
+marker-pdf
 pymupdf
+PyPDF2
