@@ -5,15 +5,15 @@ __pycache__/
 
 #sandboxes
 *.ipynb
-
+output_page/
 #packages
 vllm/
 
 # images
 *.png 
 *.jpg
-.webp 
-
+*.webp 
+*.pdf
 # C extensions
 *.so
 
