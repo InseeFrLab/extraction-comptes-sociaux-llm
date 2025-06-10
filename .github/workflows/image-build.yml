@@ -31,7 +31,12 @@ jobs:
       - name: Free up space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
-          docker rmi -f $(docker images -aq)
+          images=$(docker images -aq)
+          if [ -n "$images" ]; then
+            docker rmi -f $images
+          else
+            echo "No images to remove"
+          fi
         shell: bash
 
       - name: Set up QEMU
