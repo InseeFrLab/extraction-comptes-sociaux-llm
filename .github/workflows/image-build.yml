@@ -1,0 +1,75 @@
+name: Build & Push All Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        app:
+          - name: api_centrale
+            context: api_centrale
+          - name: api_marker
+            context: api_marker
+          - name: marker_proxy
+            context: marker_proxy
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free up space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          docker rmi -f $(docker images -aq)
+        shell: bash
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute image tags for ${{ matrix.app.name }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: inseefrlab/extraction-comptes-sociaux-llm
+          tags: |
+            # tag "latest" spécifique à l'app
+            type=raw,value=${{ matrix.app.name }}-latest
+            # tag SHA : api_centrale-<commit>
+            type=raw,value=${{ matrix.app.name }}-${{ github.sha }}
+            # tag branche : api_centrale-main
+            type=raw,value=${{ matrix.app.name }}-${{ github.ref_name }}
+
+      - name: Build & push ${{ matrix.app.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.app.context }}
+          file: ${{ matrix.app.context }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            GIT_MESSAGE=${{ github.event.head_commit.message }}
+
+      - name: Show pushed digests
+        run: |
+          echo "→ Image ${{ matrix.app.name }} pushed with digest ${{ steps.meta.outputs.digest }}"
