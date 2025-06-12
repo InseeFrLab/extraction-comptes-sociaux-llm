@@ -2,3 +2,4 @@ python-dotenv
 PyMuPDF
 s3fs
 PyPDF2
+requests

@@ -1,0 +1,24 @@
+# deployment-marker-proxy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marker-proxy
+  namespace: projet-extraction-tableaux
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: marker-proxy
+  template:
+    metadata:
+      labels:
+        app: marker-proxy
+    spec:
+      containers:
+        - name: marker-proxy
+          image: inseefrlab/extraction-comptes-sociaux-llm:marker_proxy-latest
+          ports:
+            - containerPort: 1324
+          envFrom:
+            - secretRef:
+                name: app-env

@@ -1,0 +1,35 @@
+# ingress-extraction-tableau.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: extraction-tableau
+  namespace: projet-extraction-tableaux
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  rules:
+    - host: extraction-tableau.lab.sspcloud.fr
+      http:
+        paths:
+          - path: /centrale(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: api-centrale
+                port:
+                  number: 80
+          - path: /marker(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: api-marker
+                port:
+                  number: 80
+          - path: /proxy(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: marker-proxy
+                port:
+                  number: 80

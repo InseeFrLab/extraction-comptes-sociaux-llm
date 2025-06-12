@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-centrale
+  namespace: projet-extraction-tableaux
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-centrale
+  template:
+    metadata:
+      labels:
+        app: api-centrale
+    spec:
+      containers:
+        - name: api-centrale
+          image: inseefrlab/extraction-comptes-sociaux-llm:api_centrale-latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: app-env
