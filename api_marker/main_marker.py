@@ -13,7 +13,7 @@ from PIL import Image
 import io
 
 app = FastAPI(
-    root_path="/proxy/8001"  # Parametrage du root path pour coller au proxy du ssp cloud
+#    root_path="/proxy/8001"  # Parametrage du root path pour coller au proxy du ssp cloud
 )
 
 def pdf_to_image(pdf_path, output_dir, dpi=300):
