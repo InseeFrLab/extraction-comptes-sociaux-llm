@@ -1,4 +1,4 @@
-FROM python:3.11
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -9,10 +9,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Mise à jour de pip
+RUN pip install --upgrade pip
+
 # Installation des dépendances Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir fastapi uvicorn[standard]
+
+# Vérification que les modules sont bien installés
+RUN python -c "import requests, fastapi, uvicorn, dotenv, fitz, s3fs, PyPDF2; print('All modules imported successfully')"
 
 # Copie du code source
 COPY . .
