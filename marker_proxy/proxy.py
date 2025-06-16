@@ -25,7 +25,6 @@ app = FastAPI(
     title="LLM Proxy with Langfuse",
     version="1.0.0",
     description="Proxy for LLM requests with Langfuse tracing",
-    root_path="/proxy",
     openapi_url="/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc"

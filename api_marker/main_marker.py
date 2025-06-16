@@ -16,7 +16,6 @@ app = FastAPI(
     title="API Marker PDF Extraction",
     version="1.0.0",
     description="API for PDF processing using Marker",
-    root_path="/marker",
     openapi_url="/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc"

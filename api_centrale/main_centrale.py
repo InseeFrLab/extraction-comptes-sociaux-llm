@@ -39,7 +39,6 @@ app = FastAPI(
     title="API Centrale PDF→Marker (INPI)",
     version="0.3.0",
     description="Endpoints : PDF INPI → select_page → Marker, liste des fichiers S3",
-    root_path="/centrale",
     openapi_url="/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc"
