@@ -4,7 +4,9 @@ kubectl apply -f deployment-api-centrale.yaml \
               -f service-api-centrale.yaml \
               -f service-api-marker.yaml \
               -f service-marker-proxy.yaml \
-              -f ingress-extraction-tableau.yaml
+              -f ingress-api-centrale.yaml \ 
+              -f ingress-api-marker.yaml \ 
+              -f ingress-proxy.yaml
 
 kubectl create secret generic app-env \
   --from-env-file=./.env \
@@ -17,5 +19,7 @@ kubectl delete -f deployment-api-centrale.yaml      \
                -f service-api-centrale.yaml         \
                -f service-api-marker.yaml           \
                -f service-marker-proxy.yaml         \
-               -f ingress-extraction-tableau.yaml   \
+               -f ingress-api-centrale.yaml \ 
+               -f ingress-api-marker.yaml \ 
+               -f ingress-proxy.yaml
                --namespace projet-extraction-tableaux

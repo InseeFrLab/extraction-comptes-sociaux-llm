@@ -1,0 +1,18 @@
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-proxy
+  namespace: projet-extraction-tableaux
+spec:
+  rules:
+    - host: extraction-tableau-proxy.lab.sspcloud.fr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: marker-proxy
+                port:
+                  number: 80
