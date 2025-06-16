@@ -9,7 +9,7 @@ from datetime import datetime
 import logging
 from langfuse import get_client
 
-# Charger les variables d’environnement
+# Charger les variables d'environnement
 load_dotenv()
 
 # Configuration LLM réel
@@ -21,7 +21,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # FastAPI & Langfuse client
-app = FastAPI(title="LLM Proxy with Langfuse v3", version="1.0.0")
+app = FastAPI(
+    title="LLM Proxy with Langfuse",
+    version="1.0.0",
+    description="Proxy for LLM requests with Langfuse tracing",
+    root_path="/proxy",
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 langfuse = get_client()
 
 

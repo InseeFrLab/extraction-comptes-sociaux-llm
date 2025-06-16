@@ -13,9 +13,14 @@ from PIL import Image
 import io
 
 app = FastAPI(
-    root_path="/marker" # Parametrage du root path pour coller au proxy du ssp cloud
+    title="API Marker PDF Extraction",
+    version="1.0.0",
+    description="API for PDF processing using Marker",
+    root_path="/marker",
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
-
 def pdf_to_image(pdf_path, output_dir, dpi=300):
     """
     Convertit un PDF monopage en image

@@ -35,12 +35,14 @@ if not INPI_USERNAME or not INPI_PASSWORD:
 if not AWS_S3_BUCKET or not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
     raise RuntimeError("Vous devez définir AWS_S3_BUCKET, AWS_ACCESS_KEY_ID et AWS_SECRET_ACCESS_KEY")
 
-# Configurer FastAPI
 app = FastAPI(
     title="API Centrale PDF→Marker (INPI)",
     version="0.3.0",
     description="Endpoints : PDF INPI → select_page → Marker, liste des fichiers S3",
-    root_path="/centrale"
+    root_path="/centrale",
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 logging.basicConfig(level=logging.INFO)
