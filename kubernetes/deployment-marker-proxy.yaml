@@ -17,6 +17,7 @@ spec:
       containers:
         - name: marker-proxy
           image: inseefrlab/extraction-comptes-sociaux-llm:marker_proxy-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 1324
           envFrom:
