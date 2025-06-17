@@ -73,7 +73,7 @@ async def chat_completions(request: Request):
         if key.lower() not in ["authorization", "host", "content-length"]:
             headers[key] = value
 
-    real_url = f"{REAL_LLM_BASE_URL.rstrip('/')}/v1/chat/completions"
+    real_url = REAL_LLM_BASE_URL
 
     # Trace entière du proxy
     with langfuse.start_as_current_span(
