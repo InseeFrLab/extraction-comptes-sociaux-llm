@@ -4,6 +4,10 @@ kind: Ingress
 metadata:
   name: ingress-proxy
   namespace: projet-extraction-tableaux
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:    "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:    "600"
 spec:
   rules:
     - host: extraction-tableau-proxy.lab.sspcloud.fr
