@@ -16,6 +16,7 @@ spec:
       containers:
         - name: api-centrale
           image: inseefrlab/extraction-comptes-sociaux-llm:api_centrale-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:

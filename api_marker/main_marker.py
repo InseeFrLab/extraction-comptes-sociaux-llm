@@ -92,9 +92,9 @@ def extract(pdf: UploadFile = File(...)):
             "force_ocr": True,
             "use_llm": True,
             "llm_service": "marker.services.openai.OpenAIService",
-            "openai_base_url": "https://llm.lab.sspcloud.fr/api",
+            "openai_base_url": os.getenv("PROXY_URL"),
             "openai_model": "gemma3:27b",
-            "openai_api_key": os.getenv("LAB_LLM_API_KEY"),
+            "openai_api_key": os.getenv("REAL_LLM_API_KEY"),
             "timeout": 99999,
         }
         
