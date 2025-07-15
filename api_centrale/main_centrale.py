@@ -68,8 +68,6 @@ class BearerAuth(requests.auth.AuthBase):
 _token_cache: Dict[str, Any] = {}
 
 def get_inpi_token() -> str:
-    if 'token' in _token_cache:
-        return _token_cache['token']
     resp = requests.post(
         INPI_LOGIN_URL,
         json={"username": INPI_USERNAME, "password": INPI_PASSWORD},
