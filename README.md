@@ -4,7 +4,7 @@
 
 ## 1. Vue d'ensemble
 
-`extraction-comptes-sociaux-llm` est un projet expérimental visant à automatiser l'extraction d'informations structurées (tableaux financiers) à partir de documents PDF, notamment les comptes sociaux d'entreprises.
+Un projet expérimental visant à automatiser l'extraction de tableaux à partir de documents PDF, notamment dans les comptes sociaux d'entreprises.
 
 Le projet met en œuvre une architecture de microservices conteneurisés et orchestrés par Kubernetes. Il combine des appels à des API externes (INPI), le traitement de PDF, et l'utilisation de modèles de langage (LLM) pour l'analyse et l'extraction de données.
 
@@ -105,7 +105,7 @@ LANGFUSE_SECRET_KEY=
 
 ### Étapes de déploiement
 
-1.  **Créer la Secret Kubernetes**
+1.  **Créer le Secret Kubernetes**
     Assurez-vous que votre fichier `.env` est complet, puis exécutez la commande suivante pour créer ou mettre à jour la configuration dans le cluster :
     ```sh
     kubectl delete secret app-env -n projet-extraction-tableaux --ignore-not-found
@@ -159,6 +159,7 @@ Les services sont exposés à l'extérieur du cluster via les URLs suivantes, d�
 
 *   **API Marker** : `http://extraction-tableau-marker.lab.sspcloud.fr`
     *   Service de traitement de PDF. Généralement appelé par l'API Centrale.
+    *   Utilisable sans l'API centrale (notament lorsque des problèmes avec l'API INPI surviennent)
 
 *   **Proxy LLM** : `http://extraction-tableau-proxy.lab.sspcloud.fr`
     *   Proxy d'observabilité pour le modèle de langage. Généralement appelé par l'API Marker.
