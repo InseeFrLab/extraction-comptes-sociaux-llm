@@ -973,3 +973,87 @@ def test_stale_csv_paths_ignore_les_autres_radicaux():
         "bucket/out/TAB_1234_9.csv",
     ]
     assert _stale_csv_paths(existing, "TAB_123", 1) == []
+
+
+def test_table_non_fermee_est_quand_meme_publiee():
+    """Un `</table>` manquant ne doit pas faire disparaître ce qui a été lu.
+
+    Le cas se présente des deux côtés de la mesure : une annotation saisie à la main dont
+    la balise finale manque, et une réponse de VLM coupée par sa limite de jetons. Sans
+    reprise en fin de flux, le fichier ne produit aucun tableau et quitte l'évaluation en
+    silence, au lieu d'y figurer pour ce qu'il vaut.
+    """
+    html = "<table><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</td></tr>"
+    assert _parse_html_tables(html) == [[["a", "1"], ["b", "2"]]]
+
+
+def test_table_non_fermee_ne_duplique_pas_la_precedente():
+    """La reprise ne republie pas le tableau déjà clos qui la précède."""
+    html = "<table><tr><td>a</td><td>1</td></tr></table><table><tr><td>b</td><td>2</td></tr>"
+    assert _parse_html_tables(html) == [[["a", "1"]], [["b", "2"]]]
+
+
+def test_table_fermee_nest_publiee_quune_fois():
+    """Un document bien formé est parsé exactement comme avant la reprise."""
+    html = "<table><tr><td>a</td><td>1</td></tr></table>"
+    assert _parse_html_tables(html) == [[["a", "1"]]]
+
+
+# ── Récupération sur HTML malformé (règles de fermeture implicite HTML5) ──────
+#
+# Dix des quarante annotations du corpus historique portent une balise en trop ou en
+# moins. Ces règles sont celles d'un navigateur ; elles ne se déclenchent que sur du HTML
+# invalide, et la sortie du corpus `reprise/` est inchangée au bit près.
+
+
+def test_tr_en_double_ne_consomme_pas_une_ligne_de_rowspan():
+    """`<tr> <tr>` est une balise en double, pas une ligne vide.
+
+    Sans cette règle, la ligne fantôme décomptait le `rowspan` en cours : la fusion
+    cessait une ligne trop tôt et tout ce qui suivait glissait d'un cran. Sur
+    `ground_truth_1876`, cela inventait huit colonnes entièrement vides.
+    """
+    html = (
+        "<table>"
+        '<tr><td rowspan="2">A</td><td>1</td></tr>'
+        "<tr> <tr><td>2</td></tr>"
+        "<tr><td>B</td><td>3</td></tr>"
+        "</table>"
+    )
+    assert _parse_html_tables(html) == [[["A", "1"], ["", "2"], ["B", "3"]]]
+
+
+def test_tr_implicite_ferme_la_ligne_ouverte():
+    """Un `<tr>` alors qu'une ligne est ouverte referme celle-ci, contenu conservé."""
+    html = "<table><tr><td>a</td><td>1</td><tr><td>b</td><td>2</td></tr></table>"
+    assert _parse_html_tables(html) == [[["a", "1"], ["b", "2"]]]
+
+
+def test_td_non_referme_ne_fuit_pas_sur_la_ligne_suivante():
+    """Une cellule laissée ouverte est fermée par la fin de sa ligne, pas par la suivante."""
+    html = "<table><tr><td>a</td><td>1<tr><td>b</td><td>2</td></tr></table>"
+    assert _parse_html_tables(html) == [[["a", "1"], ["b", "2"]]]
+
+
+def test_td_non_referme_est_ferme_par_le_td_suivant():
+    """Deux `<td>` d'affilée : le premier est refermé, sa valeur reste à sa place."""
+    html = "<table><tr><td>a<td>1</td></tr></table>"
+    assert _parse_html_tables(html) == [[["a", "1"]]]
+
+
+def test_balise_fermante_orpheline_nest_pas_une_cellule():
+    """Un `</td>` sans ouvrant n'écrit pas de cellule fantôme."""
+    html = "<table><tr><td>a</td></td><td>1</td></tr></table>"
+    assert _parse_html_tables(html) == [[["a", "1"]]]
+
+
+def test_cellule_hors_ligne_ouvre_une_ligne():
+    """Un `<td>` rencontré hors de toute `<tr>` en ouvre une."""
+    html = "<table><td>a</td><td>1</td></table>"
+    assert _parse_html_tables(html) == [[["a", "1"]]]
+
+
+def test_ligne_ouverte_a_la_fermeture_de_la_table():
+    """Un `</table>` referme la ligne et la cellule restées ouvertes."""
+    html = "<table><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</table>"
+    assert _parse_html_tables(html) == [[["a", "1"], ["b", "2"]]]

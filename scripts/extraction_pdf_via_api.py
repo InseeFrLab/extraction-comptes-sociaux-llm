@@ -44,7 +44,7 @@ Extraction des PDFs depuis S3 via les APIs d'extraction (api_marker ou api_opend
     CHANDRA_BASE_URL   URL vllm  (défaut: https://llm.lab.sspcloud.fr/api, sans /v1)
     CHANDRA_MODEL      Nom du modèle (défaut: chandra-ocr-2)
     CHANDRA_API_KEY    Clé API (défaut: EMPTY ; sur llm.lab, passer REAL_LLM_API_KEY)
-    CHANDRA_DPI        Résolution PDF→image (défaut: 200)
+    CHANDRA_DPI        Résolution PDF→image, en dpi (défaut: 200, fixe)
 
   Voir le docstring de api/api_chandra/src/main_chandra.py pour ce que le déploiement du
   modèle doit fournir de son côté (chat_template.jinja, défauts d'échantillonnage).
@@ -56,6 +56,9 @@ Extraction des PDFs depuis S3 via les APIs d'extraction (api_marker ou api_opend
     # Avec api_marker (défaut)
     uv run extraction_pdf_via_api.py --from-parquet
     uv run extraction_pdf_via_api.py --pdf-key dossier/fichier.pdf
+
+    # Avec api_chandra (VLM)
+    uv run extraction_pdf_via_api.py --api chandra --from-parquet
 
     # Avec api_opendataloader
     uv run extraction_pdf_via_api.py --api opendataloader --from-parquet
@@ -107,6 +110,7 @@ OUTPUT_EXTENSIONS = {
     "opendataloader": ".html",
     "chandra": ".json",
 }
+
 
 S3_BUCKET = S3_BASE.removeprefix("s3://")
 
@@ -200,7 +204,7 @@ def main():
     )
     parser.add_argument(
         "--api",
-        choices=["marker", "opendataloader", "chandra"],
+        choices=list(API_URLS),
         default="marker",
         help="API à utiliser pour l'extraction (défaut: marker)",
     )

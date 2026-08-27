@@ -20,7 +20,11 @@ Métriques (type rappel, une ligne par couple fichier × méthode) :
   numeric_recovery  – taux de cellules numériques (hors en-têtes) bien récupérées
   total_extraction  – 1 si structure complète (toutes colonnes/lignes matchées) et toutes
                       les cellules numériques de la zone de données sont récupérées
-                      (tolérance : espaces dans les nombres, pourcentages décimaux/pourcentage)
+
+Les valeurs sont comparées après normalisation (`_normalize_numeric_str`), qui absorbe les
+écarts d'écriture — espaces séparateurs de milliers, séparateur décimal, signe négatif
+détaché, parenthèses comptables, pourcentages — mais rien d'autre : deux valeurs aux
+chiffres différents restent différentes.
 
 Usage :
     uv run evaluation_extraction.py [--threshold 0.5 --cell-delta 0]
@@ -381,17 +385,6 @@ def _normalize_label(value: str) -> str:
     return " ".join(sans_accents.casefold().split())
 
 
-def _is_numeric(value: str) -> bool:
-    s = value.strip().replace(",", ".").replace(" ", "").replace(" ", "")
-    if not s:
-        return True
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-
 def _is_empty(value: str) -> bool:
     return value.strip() == ""
 
@@ -414,12 +407,21 @@ _UNIT_SUFFIX_RE = re.compile(
 
 
 def _looks_numeric(value: str) -> bool:
-    """Variante permissive de `_is_numeric`, dédiée à la détection d'en-têtes.
+    """La cellule relève-t-elle de la zone de données, plutôt que d'un en-tête ?
 
-    Accepte en plus :
+    Volontairement permissive : elle décide du dénominateur de `numeric_recovery`, pas de
+    l'égalité de deux valeurs — comparer est l'affaire de `_normalize_numeric_str`. Sont
+    donc acceptés, en plus des nombres purs et de la cellule vide :
+
     - parenthèses comptables : (14) → -14
-    - unités en suffixe       : 15,24 €, 344 369 NOK, 100,00%
-    - placeholders d'absence  : -, NC, ND, N/A
+    - unités en suffixe      : 15,24 €, 344 369 NOK, 100,00%
+    - placeholders d'absence : -, NC, ND, N/A
+
+    Args:
+        value: cellule brute.
+
+    Returns:
+        True si la cellule ressemble à une donnée numérique.
     """
     s = value.strip()
     if not s:
@@ -439,44 +441,104 @@ def _looks_numeric(value: str) -> bool:
         return False
 
 
+# Les trois familles d'écarts purement typographiques que la comparaison doit absorber :
+# une valeur entre parenthèses est un négatif en écriture comptable, un signe peut être
+# détaché du nombre par une espace, et le séparateur décimal s'écrit indifféremment
+# virgule ou point. Dans les trois cas les deux côtés portent les mêmes chiffres.
+_ACCOUNTING_RE = re.compile(r"^\((.+)\)$")
+_LEADING_SIGN_RE = re.compile(r"^-[\s\xa0\u202f]*")
+_THOUSANDS_RE = re.compile(r"(\d)[\s\xa0\u202f]+(\d)")
+_PERCENT_RE = re.compile(r"(\d+(?:[,.]\d+)?)[\s\xa0\u202f]*%")
+_PLAIN_RE = re.compile(r"\d+(?:[,.]\d+)?")
+
+
+def _canonical_number(body: str) -> str | None:
+    """Forme canonique d'un nombre non signé, ou None si ce n'en est pas un.
+
+    Le cas général n'emprunte pas `float` : sur un montant de plus de dix chiffres
+    significatifs — `10 640 226 396` existe dans le corpus — un formatage en `.10g`
+    arrondirait, et deux montants voisins se confondraient.
+
+    Args:
+        body: chaîne sans signe, espaces séparateurs de milliers déjà retirés.
+
+    Returns:
+        La forme canonique (point décimal, zéros non significatifs retirés), ou None.
+    """
+    percent = _PERCENT_RE.fullmatch(body)
+    if percent:
+        return f"{float(percent.group(1).replace(',', '.')) / 100:.6g}"
+    if not _PLAIN_RE.fullmatch(body):
+        return None
+    integer, _, fraction = body.replace(",", ".").partition(".")
+    integer = integer.lstrip("0") or "0"
+    fraction = fraction.rstrip("0")
+    return f"{integer}.{fraction}" if fraction else integer
+
+
 def _normalize_numeric_str(val: str) -> str:
-    """Normalise un nombre textuel pour la comparaison.
+    """Ramène une cellule à une forme canonique, pour la seule comparaison.
 
-    - Supprime les espaces séparateurs de milliers : '25 000' → '25000'.
-    - Convertit les pourcentages en décimales : '100%' → '1', '66,67%' → '0.6667'.
-    - Unifie les tirets : '—' → '-', '−30' → '-30'.
+    Absorbe les écarts d'écriture, ceux où les deux côtés portent les mêmes chiffres :
+
+    - espaces séparateurs de milliers, insécables compris : '25 000' → '25000' ;
+    - séparateur décimal : '2.08' et '2,08' → '2.08' ;
+    - signe négatif détaché du nombre : '- 30 000' → '-30000' ;
+    - parenthèses comptables : '(1 976)' → '-1976' ;
+    - pourcentages, convertis en décimales : '100%' et '100,00%' → '1' ;
+    - variantes de tiret : '—' → '-', '−30' → '-30'.
+
+    Une cellule qui n'est pas un nombre est rendue telle quelle, tirets unifiés et espaces
+    entre chiffres retirés : la comparaison reste alors textuelle. **Signe et parenthèses
+    ne sont interprétés que devant un nombre** — sans quoi '(en milliers d'euros)' se
+    verrait attribuer un signe négatif.
+
+    Args:
+        val: cellule brute.
+
+    Returns:
+        La forme canonique comparable.
     """
-    s = _unify_dashes(val.strip())
-    # Espaces séparateurs de milliers (normaux, insécables  ,  )
-    s = re.sub(r"(\d)[\s  ]+(\d)", r"\1\2", s)
-    # Pourcentages → décimales
-    m = re.fullmatch(r"(-?\d+(?:[,\.]\d+)?)\s*%", s)
-    if m:
-        try:
-            n = float(m.group(1).replace(",", ".")) / 100
-            s = f"{n:.6g}"
-        except ValueError:
-            pass
-    return s
+    text = _unify_dashes(val.strip())
+
+    body, negative = text, False
+    accounting = _ACCOUNTING_RE.match(body)
+    if accounting:
+        body, negative = accounting.group(1).strip(), True
+    if _LEADING_SIGN_RE.match(body):
+        body, negative = _LEADING_SIGN_RE.sub("", body, count=1), True
+
+    # '1 234 567' porte deux espaces séparateurs, et les correspondances de `re.sub` ne se
+    # chevauchent pas : une seule passe n'en retirerait pas forcément tous.
+    def strip_thousands(value: str) -> str:
+        for _ in range(3):
+            value = _THOUSANDS_RE.sub(r"\1\2", value)
+        return value
+
+    canonical = _canonical_number(strip_thousands(body))
+    if canonical is not None:
+        return ("-" if negative else "") + canonical
+    return strip_thousands(text)
 
 
-def _cell_recovered(
-    prediction: pd.DataFrame, pr: int, pc: int, val: str, delta: int, strict: bool = False
-) -> bool:
-    """Retourne True si val est trouvée dans prediction à (pr, pc±delta).
+def _cell_recovered(prediction: pd.DataFrame, pr: int, pc: int, val: str, delta: int) -> bool:
+    """La valeur attendue est-elle présente dans la prédiction en (pr, pc±delta) ?
 
-    Si `strict` est False (défaut), comparaison via `_normalize_numeric_str`
-    (tolérante aux espaces séparateurs et au format des pourcentages).
-    Si `strict` est True, comparaison de chaîne brute après strip — utilisée
-    pour les cellules avec unités, parenthèses ou placeholders.
+    Args:
+        prediction: grille prédite.
+        pr: ligne appariée dans la prédiction.
+        pc: colonne appariée dans la prédiction.
+        val: valeur attendue.
+        delta: tolérance en colonnes (±).
+
+    Returns:
+        True dès qu'une des colonnes balayées porte la même valeur, après normalisation.
     """
-    target = _unify_dashes(val.strip()) if strict else _normalize_numeric_str(val)
+    target = _normalize_numeric_str(val)
     for dc in range(-delta, delta + 1):
         c = pc + dc
         if 0 <= c < len(prediction.columns):
-            cand = prediction.iloc[pr, c]
-            cand_norm = _unify_dashes(cand.strip()) if strict else _normalize_numeric_str(cand)
-            if cand_norm == target:
+            if _normalize_numeric_str(prediction.iloc[pr, c]) == target:
                 return True
     return False
 
@@ -667,10 +729,10 @@ def evaluate_pair(
 
     # Cellules numériques (zone de données, hors en-têtes)
     # On compte toutes les cellules `_looks_numeric` (nombres purs, unités, parenthèses,
-    # placeholders). La comparaison avec la prédiction est :
-    #   - normalisée (espaces, %)   pour les nombres purs (`_is_numeric` True)
-    #   - stricte (chaîne identique) pour les cellules avec unités / parenthèses /
-    #     placeholders, où l'on évalue l'exactitude des caractères extraits
+    # placeholders), et on les compare toutes par `_normalize_numeric_str`. Un seul chemin :
+    # les cellules à unité ou à parenthèses partaient autrefois en comparaison de chaîne
+    # brute, ce qui comptait fausses `100%` contre `100,00%` ou `2.08` contre `2,08` — des
+    # écarts d'écriture, à chiffres identiques de part et d'autre.
     total_num = recovered_num = 0
     for r in range(ann_hrows, n_ann_rows):
         for c in range(ann_hcols, n_ann_cols):
@@ -681,12 +743,9 @@ def evaluate_pair(
             if r in row_match and c in col_match:
                 pr, pc = row_match[r], col_match[c]
                 if pr < len(prediction) and pc < len(prediction.columns):
-                    pred_val = prediction.iloc[pr, pc]
-                    if _is_numeric(val):
-                        match = _normalize_numeric_str(pred_val) == _normalize_numeric_str(val)
-                    else:
-                        match = pred_val.strip() == val.strip()
-                    if match:
+                    if _normalize_numeric_str(prediction.iloc[pr, pc]) == _normalize_numeric_str(
+                        val
+                    ):
                         recovered_num += 1
 
     numeric_recovery = recovered_num / total_num if total_num else float("nan")  # cas sans cellules
@@ -710,8 +769,7 @@ def evaluate_pair(
                 if pr >= len(prediction) or pc >= len(prediction.columns):
                     total_ok = False
                     break
-                strict = not _is_numeric(val)
-                if not _cell_recovered(prediction, pr, pc, val, cell_delta, strict=strict):
+                if not _cell_recovered(prediction, pr, pc, val, cell_delta):
                     total_ok = False
                     break
 

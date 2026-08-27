@@ -6,7 +6,6 @@ Ces fonctions conditionnent directement les métriques `numeric_recovery` et
 
 import pytest
 from evaluation_extraction import (
-    _is_numeric,
     _lev_similarity,
     _looks_numeric,
     _normalize_label,
@@ -31,16 +30,60 @@ def test_normalize_numeric_str(value, expected):
     assert _normalize_numeric_str(value) == expected
 
 
+# ── écarts purement typographiques ───────────────────────────────────────────
+#
+# Trois familles où les deux côtés portent les mêmes chiffres et ne diffèrent que par
+# l'écriture. Elles étaient comptées fausses : 38 cellules marker et 37 chandra.
+
+
 @pytest.mark.parametrize(
-    "value",
-    ["1 234,5", "-42", "", "   "],
+    ("annote", "predit"),
+    [
+        ("2.08", "2,08"),  # séparateur décimal
+        ("0.6667", "0,6667"),
+        ("- 30 000", "-30 000"),  # signe négatif détaché du nombre
+        ("-30 000", "\u221230000"),
+        ("(1 976)", "-1 976"),  # parenthèses comptables
+        ("(14)", "-14"),
+        ("100%", "100,00%"),  # pourcentage, deux écritures
+        ("0,7", "70%"),  # pourcentage contre décimale
+        ("3342864", "3 342 864"),  # séparateur de milliers
+    ],
 )
-def test_is_numeric_accepte(value):
-    assert _is_numeric(value)
+def test_les_ecarts_d_ecriture_sont_absorbes(annote, predit):
+    """Mêmes chiffres, écriture différente : la comparaison doit conclure à l'égalité."""
+    assert _normalize_numeric_str(annote) == _normalize_numeric_str(predit)
 
 
-def test_is_numeric_refuse_du_texte():
-    assert not _is_numeric("Capital social")
+@pytest.mark.parametrize(
+    ("annote", "predit"),
+    [
+        ("1 976", "(1 976)"),  # signe opposé : ce n'est pas un écart d'écriture
+        ("21 163", "22 163"),  # un chiffre mal lu
+        ("6 817 282", "6 817 28"),  # troncature en fin de cellule
+        ("469 453", "469 543"),  # deux chiffres permutés
+        ("2,08", "20,8"),  # décimale mal placée
+        ("10 640 226 396", "10 640 226 397"),  # onze chiffres, un seul diffère
+    ],
+)
+def test_la_normalisation_ne_confond_pas_deux_valeurs_distinctes(annote, predit):
+    """La normalisation absorbe l'écriture, jamais une différence de valeur.
+
+    Le dernier cas garde la précision : un formatage en `.10g` arrondirait ces deux
+    montants à la même chaîne, et créditerait une erreur de lecture.
+    """
+    assert _normalize_numeric_str(annote) != _normalize_numeric_str(predit)
+
+
+def test_le_signe_n_est_interprete_que_devant_un_nombre():
+    """« (en milliers d'euros) » n'est pas un négatif et ne doit pas gagner de signe."""
+    assert _normalize_numeric_str("(en milliers d'euros)") == "(en milliers d'euros)"
+    assert _normalize_numeric_str("- FILIALES") == "- FILIALES"
+
+
+def test_les_zeros_non_significatifs_ne_distinguent_pas_deux_montants():
+    assert _normalize_numeric_str("0042") == _normalize_numeric_str("42")
+    assert _normalize_numeric_str("2,080") == _normalize_numeric_str("2,08")
 
 
 @pytest.mark.parametrize(

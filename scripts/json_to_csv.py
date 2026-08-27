@@ -8,12 +8,19 @@ OpenDataLoader : s3://projet-extraction-tableaux/reprise/output_opendataloader/
                → s3://projet-extraction-tableaux/reprise/output_csv/opendataloader/
 marker_last_work : s3://projet-extraction-tableaux/LLM_eval/response_json/
                → s3://projet-extraction-tableaux/LLM_eval/output_csv/marker_last_work/
+chandra_historiques : s3://projet-extraction-tableaux/tableaux_historiques/output_chandra/
+               → s3://projet-extraction-tableaux/tableaux_historiques/output_csv/chandra/
+Chaque moteur du corpus historique a son entrée, cf. scripts/corpus_historiques.py.
 
 Usage :
     uv run json_to_csv.py --method marker
     uv run json_to_csv.py --method opendataloader
     uv run json_to_csv.py --method marker_last_work
     uv run json_to_csv.py --method chandra
+    uv run json_to_csv.py --method chandra_historiques
+    uv run json_to_csv.py --method chandra_prompt_ocr_historiques
+    uv run json_to_csv.py --method chandra_prompt_layout_historiques
+    uv run json_to_csv.py --method chandra_borne_historiques
     uv run json_to_csv.py --method all          (défaut)
     uv run json_to_csv.py --method marker --overwrite   (régénère au lieu d'ignorer)
 """
@@ -49,6 +56,35 @@ SOURCES: dict[str, dict] = {
         "input": f"{BUCKET}/reprise/output_chandra",
         "output": f"{BUCKET}/reprise/output_csv/chandra",
         "ext": ".json",
+    },
+    # Corpus « tableaux historiques ». Plusieurs conditions y sont comparées — notre appel
+    # direct et les variantes qui en bougent un réglage à la fois — mais toutes rendent la
+    # sortie d'API de chandra, donc rigoureusement le même extracteur. Une entrée par moteur
+    # de `corpus_historiques.MOTEURS`, même préfixe S3 : c'est le seul endroit à tenir à jour
+    # quand une condition s'y ajoute.
+    "chandra_historiques": {
+        "input": f"{BUCKET}/tableaux_historiques/output_chandra",
+        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra",
+        "ext": ".json",
+        "extractor": "chandra",
+    },
+    "chandra_prompt_ocr_historiques": {
+        "input": f"{BUCKET}/tableaux_historiques/output_chandra_prompt_ocr",
+        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_prompt_ocr",
+        "ext": ".json",
+        "extractor": "chandra",
+    },
+    "chandra_prompt_layout_historiques": {
+        "input": f"{BUCKET}/tableaux_historiques/output_chandra_prompt_layout",
+        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_prompt_layout",
+        "ext": ".json",
+        "extractor": "chandra",
+    },
+    "chandra_borne_historiques": {
+        "input": f"{BUCKET}/tableaux_historiques/output_chandra_borne",
+        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_borne",
+        "ext": ".json",
+        "extractor": "chandra",
     },
     "marker_last_work": {
         "input": f"{BUCKET}/LLM_eval/response_json",
@@ -743,6 +779,11 @@ class _TableHTMLParser(HTMLParser):
         # (balise, colspan) de chaque cellule, ligne par ligne, pour le tableau courant.
         self._tags: list[list[tuple[str, int]]] = []
         self._row_tags: list[tuple[str, int]] = []
+        # Un `<table>` — et un `<tr>` — sont-ils ouverts ? Ni `_rows` ni `_row` ne le
+        # disent : tous deux gardent le contenu du dernier élément clos, et les relire en
+        # fin de flux le publierait une seconde fois.
+        self._in_table: bool = False
+        self._in_row: bool = False
 
     @staticmethod
     def _span(value) -> int:
@@ -785,8 +826,68 @@ class _TableHTMLParser(HTMLParser):
             if self._carried[col] <= 0:
                 del self._carried[col]
 
+    def _open_row(self) -> None:
+        """Ouvre une ligne, en lui pourvoyant les positions qu'une fusion occupe déjà."""
+        self._row = []
+        self._row_tags = []
+        self._in_row = True
+        # Une fusion verticale ouverte sur une ligne précédente occupe déjà le
+        # début de celle-ci : ces positions sont pourvues avant la première cellule.
+        self._fill_carried()
+
+    def _end_row(self, implicite: bool = False) -> None:
+        """Termine la ligne courante et la verse dans la grille.
+
+        Args:
+            implicite: la fermeture est déduite d'une balise ouvrante, non écrite dans le
+                document. Une ligne implicite sans aucun contenu est alors **abandonnée
+                sans décompter les fusions en cours** : elle ne vient pas d'une ligne du
+                tableau mais d'un `<tr>` en double (« `<tr> <tr> <td…` », dix annotations
+                du corpus historique). La compter ferait consommer une ligne de `rowspan`
+                à un rang qui n'existe pas, et décalerait tout ce qui suit.
+        """
+        # Fin de ligne implique fin de cellule : sans cela, un `<td>` non refermé en fin de
+        # ligne serait écrit dans la ligne suivante, qu'il décalerait d'un cran.
+        self._close_cell()
+        if implicite and not any(cellule.strip() for cellule in self._row):
+            self._row, self._row_tags, self._in_row = [], [], False
+            return
+        self._close_row()
+        self._in_row = False
+        if self._row:
+            self._rows.append(self._row)
+            self._tags.append(self._row_tags)
+
+    def _close_cell(self) -> None:
+        """Termine la cellule courante et l'écrit dans la ligne, fusions comprises."""
+        if not self._in_cell:
+            return
+        self._in_cell = False
+        value = self._cell.strip()
+        start = len(self._row)
+        for offset in range(self._colspan):
+            self._row.append(value if offset == 0 else "")
+        if self._rowspan > 1:
+            # Le compteur vaut le rowspan entier, pas rowspan - 1 : `_close_row`
+            # décompte aussi la ligne de déclaration, et le report doit lui survivre
+            # pour couvrir les rowspan - 1 lignes suivantes.
+            for offset in range(self._colspan):
+                self._carried[start + offset] = self._rowspan
+        self._colspan = 1
+        self._rowspan = 1
+        self._fill_carried()
+
+    # Les balises ouvrantes ci-dessous referment ce qui doit l'être, comme le fait
+    # l'algorithme de parsing HTML5 : un `<tr>` implique la fermeture de la ligne ouverte,
+    # un `<td>` celle de la cellule ouverte, et une cellule hors ligne en ouvre une. Les
+    # annotations saisies à la main en ont besoin — dix des quarante du corpus historique
+    # portent une balise en trop ou en moins — et un navigateur les lit ainsi.
+
     def handle_starttag(self, tag, attrs):
         if tag in ("th", "td"):
+            self._close_cell()
+            if not self._in_row:
+                self._open_row()
             self._in_cell = True
             self._cell = ""
             attrs_dict = dict(attrs)
@@ -796,47 +897,56 @@ class _TableHTMLParser(HTMLParser):
         elif tag == "br" and self._in_cell:
             self._cell += _BR
         elif tag == "tr":
-            self._row = []
-            self._row_tags = []
-            # Une fusion verticale ouverte sur une ligne précédente occupe déjà le
-            # début de celle-ci : ces positions sont pourvues avant la première cellule.
-            self._fill_carried()
+            if self._in_row:
+                self._end_row(implicite=True)
+            self._open_row()
         elif tag == "table":
             self._rows = []
             self._tags = []
             self._carried = {}
+            self._in_table = True
 
     def handle_endtag(self, tag):
         if tag in ("th", "td"):
-            self._in_cell = False
-            value = self._cell.strip()
-            start = len(self._row)
-            for offset in range(self._colspan):
-                self._row.append(value if offset == 0 else "")
-            if self._rowspan > 1:
-                # Le compteur vaut le rowspan entier, pas rowspan - 1 : `_close_row`
-                # décompte aussi la ligne de déclaration, et le report doit lui survivre
-                # pour couvrir les rowspan - 1 lignes suivantes.
-                for offset in range(self._colspan):
-                    self._carried[start + offset] = self._rowspan
-            self._colspan = 1
-            self._rowspan = 1
-            self._fill_carried()
+            # Une balise fermante orpheline ne doit pas écrire de cellule fantôme.
+            self._close_cell()
         elif tag == "tr":
-            self._close_row()
-            if self._row:
-                self._rows.append(self._row)
-                self._tags.append(self._row_tags)
-        elif tag == "table" and self._rows:
-            # Le découpage vient après le traitement des fusions : il ajoute des lignes,
-            # et `_carried` compte en lignes du HTML.
-            self.tables.append(_split_stacked_rows(self._rows))
-            self.markups.append(_read_markup(self._tags))
-            self._carried = {}
+            if self._in_row:
+                self._end_row()
+        elif tag == "table":
+            self._publish_table()
 
     def handle_data(self, data):
         if self._in_cell:
             self._cell += data.replace("\n", " ")
+
+    def _publish_table(self) -> None:
+        """Verse le tableau courant dans `tables`, et referme son état."""
+        self._close_cell()
+        if self._in_row:
+            self._end_row()
+        self._in_table = False
+        if not self._rows:
+            return
+        # Le découpage vient après le traitement des fusions : il ajoute des lignes,
+        # et `_carried` compte en lignes du HTML.
+        self.tables.append(_split_stacked_rows(self._rows))
+        self.markups.append(_read_markup(self._tags))
+        self._carried = {}
+
+    def close(self):
+        """Termine le parsing, en publiant un `<table>` que le document n'a pas fermé.
+
+        Un HTML tronqué — annotation saisie à la main, sortie de VLM coupée par sa limite
+        de jetons — laisse le `</table>` manquant. Sans cette reprise, tout ce qui a été lu
+        est perdu et le fichier disparaît de la mesure au lieu d'y figurer pour ce qu'il
+        vaut. C'est aussi ce que fait un navigateur, qui referme les balises ouvertes en
+        fin de flux. Mesuré sur les 96 JSON du corpus `reprise/`, aucun n'a de `<table>`
+        non fermé : la reprise n'y change rien.
+        """
+        super().close()
+        if self._in_table:
+            self._publish_table()
 
 
 def _parse_html_tables(html: str) -> list[Table]:
@@ -850,6 +960,7 @@ def _parse_html_tables(html: str) -> list[Table]:
     """
     parser = _TableHTMLParser()
     parser.feed(html)
+    parser.close()
     return [_normalize_grid(table) for table in parser.tables]
 
 
@@ -927,6 +1038,9 @@ def _chandra_page_blocks(html: str) -> list[_Block]:
     """
     parser = _ChandraPageParser()
     parser.feed(html)
+    # `close()` publie le `<table>` qu'une réponse coupée par la limite de jetons laisse
+    # ouvert : sans lui, `page_blocks` ne verrait rien de ce qui a été lu.
+    parser.close()
     return parser.page_blocks()
 
 
@@ -987,7 +1101,9 @@ def run_pipeline(method: str, fs: s3fs.S3FileSystem, overwrite: bool = False) ->
         "opendataloader": OpenDataLoaderTableExtractor(),
         "chandra": ChandraTableExtractor(),
     }
-    extractor = extractors[method]
+    # Une entrée de SOURCES est un couple (corpus, moteur) : `extractor` dit lequel des
+    # extracteurs la lit, et ne vaut la peine d'être écrit que si le nom diffère.
+    extractor = extractors[cfg.get("extractor", method)]
 
     input_files = sorted(fs.glob(f"{cfg['input']}/*{ext}"))
     print(f"[{method}] {len(input_files)} fichier(s) trouvé(s)\n")
@@ -1049,7 +1165,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Conversion JSON → CSV (Marker / OpenDataLoader)")
     parser.add_argument(
         "--method",
-        choices=["marker", "opendataloader", "chandra", "marker_last_work", "all"],
+        choices=[*SOURCES, "all"],
         default="all",
         help="Source à convertir (défaut : all)",
     )

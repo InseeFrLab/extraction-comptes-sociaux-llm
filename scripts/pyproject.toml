@@ -14,6 +14,11 @@ dependencies = [
     "pyarrow>=24.0.0",   # moteur parquet de pandas (read_parquet / to_parquet)
     "openpyxl>=3.1.0",   # lecture des annotations XLSX (pd.read_excel)
     "requests>=2.33.1",
+    # Imports réels de `apercus.py`, qui fabrique les vignettes des documents sources
+    # publiées par le site : pymupdf rend les pages des PDF de comptes sociaux, Pillow
+    # réduit et encode en JPEG. Aucun autre script de ce dossier n'en dépend.
+    "pymupdf>=1.27.2.2",
+    "pillow>=12.2.0",
     # Importés directement par les scripts (pas seulement via extraction-common).
     "s3fs>=2025.3.0",
     "python-dotenv>=1.2.2",

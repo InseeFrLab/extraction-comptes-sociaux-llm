@@ -51,13 +51,15 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
-        run: uv run --project website python website/build_data.py
+        run: |
+          uv run --project website python website/build_data.py
+          uv run --project website python website/build_data_historiques.py
 
       - name: Signaler l'absence de données
         if: steps.data.outcome == 'failure'
         run: |
           echo "::warning title=Comparaison indisponible::La récupération S3 a échoué :" \
-               "la page « Comparaison des tableaux » sera publiée sans les grilles." \
+               "les pages « Comparaison » seront publiées sans les grilles." \
                "Vérifier les secrets AWS_* (un AWS_SESSION_TOKEN temporaire expire)."
 
       - name: quarto render

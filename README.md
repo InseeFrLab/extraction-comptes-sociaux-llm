@@ -40,8 +40,9 @@ extraction-comptes-sociaux-llm/
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
 │   │
-│   └── api_chandra/          (port 8003) ← extraction via le VLM Chandra (vllm) : chaque page
-│       │                                   est envoyée en image, Chandra renvoie du HTML <table>
+│   └── api_chandra/          (port 8003) ← extraction via le VLM Chandra (vllm) : /extract prend
+│       │                                   un `pdf` (rendu page par page) ou une `image` (envoyée
+│       │                                   telle quelle), Chandra renvoie du HTML <table>
 │       ├── src/main_chandra.py            ← parsé ensuite en JSON
 │       └── pyproject.toml / uv.lock
 │

@@ -11,6 +11,13 @@ Le [README.md](README.md) reste la référence pour l'installation, la config `.
 
 Le repo est donc un pipeline en trois temps : `PDF → JSON → CSV → métriques`.
 
+Deux corpus le traversent, mêmes étapes et mêmes métriques :
+
+| Corpus | Entrée | Référence | Moteurs | Préfixe S3 |
+|---|---|---|---|---|
+| **Comptes sociaux** | PDF scannés | XLSX (`annotations/clean/`) | marker, chandra | `reprise/` |
+| **Tableaux historiques** | images TIFF/PNG, un tableau par fichier | HTML (`annotations/tableaux historiques/`) | chandra | `tableaux_historiques/` |
+
 ## Architecture
 
 ```
@@ -26,7 +33,7 @@ PDF (S3) ──> api_marker (OCR GPU) ──> marker_proxy ──> LLM distant
 |---|---|
 | `api/` | Services FastAPI, un sous-dossier = une image Docker. `api_marker` (OCR + structuration, **GPU**), `marker_proxy` (relais LLM + tracing Langfuse), `api_opendataloader` et `api_chandra` (moteurs alternatifs, pour comparaison). |
 | `libs/` | Package partagé `extraction-common`, installé **en éditable** partout. `extraction_common/s3.py` (client S3), `data_management/` (config marker, batch sizes, PDF → image). |
-| `scripts/` | Orchestration et évaluation, lancés en local via `uv`. `extraction_pdf_via_api.py` (étape 1), `json_to_csv.py` (étape 2), `comparaison_pdf_csv.py` + `evaluation_extraction.py` (étape 3). |
+| `scripts/` | Orchestration et évaluation, lancés en local via `uv`. `extraction_pdf_via_api.py` (étape 1), `json_to_csv.py` (étape 2), `comparaison_pdf_csv.py` + `evaluation_extraction.py` (étape 3). Le corpus historique a ses variantes d'étape 1 et 3 — `extraction_historiques.py`, `evaluation_historiques.py`, `chiffres_site_historiques.py` — et ses conventions dans `corpus_historiques.py` ; l'étape 2 est commune. `apercus.py` fabrique les vignettes des documents sources publiées par le site, pour les deux corpus. |
 | `tests/` | Tests unitaires (voir plus bas). |
 | `legacy/`, `api/api_centrale/`, `kubernetes/` | **Legacy — ne pas modifier.** Anciens PoC, ancien service de récupération INPI (pip/`requirements.txt`, Python 3.11) et ancien déploiement SSP Cloud. Conservés pour référence, hors périmètre de travail. `legacy/` est exclu du lint. |
 
@@ -36,6 +43,8 @@ Points structurants à connaître avant de modifier du code :
 - **`extraction-common` doit rester en `editable = true`** dans `[tool.uv.sources]` : sinon les modifs de `libs/src/**` ne sont pas prises en compte.
 - **La config OCR est centralisée** dans `libs/src/data_management/extract_image_to_json.py` (`use_llm`, `openai_model`, `recognition_batch_size`). Sur GPU 16 Go, garder `recognition_batch_size` ≤ 32 sous peine d'OOM.
 - Les chemins S3 sont des constantes en tête de chaque script (`BUCKET`, `METHODS`, `SOURCES`) — ajouter une méthode d'extraction = ajouter une entrée dans ces dicts.
+- **`corpus_historiques.py` ne doit dépendre de rien.** Il est importé en cascade par `website/build_data_historiques.py`, dont le venv n'a ni `requests` ni `Pillow` : y ajouter un import tiers casserait le rendu du site.
+- **`api_chandra` accepte soit un `pdf`, soit une `image`.** Le dpi (`CHANDRA_DPI`) ne concerne que les PDF, où il est **fixe à 200** — le mode adaptatif page par page qui a existé était mesuré perdant (−149 cellules sur 31 paires) et a été retiré. Une image n'a pas de taille physique, donc pas de dpi : c'est le nombre de pixels envoyés qui décide de ce que le modèle voit, via `cote_max` (2 200 px de grand côté, soit à peu près une A4 lue à 200 dpi).
 
 ## Consignes de dev
 
