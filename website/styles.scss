@@ -48,7 +48,9 @@ $rule: #c7cfd7;
   --dx-ord-3: #3987e5;
   --dx-ord-4: #86b6ef;
 
-  // Séries catégorielles, slots 1 et 2 (ΔE vision normale 33,6 ; CVD 24,7).
+  // Séries catégorielles, un slot par moteur (ΔE vision normale 33,6 ; CVD 24,7 entre les
+  // deux). Le comparateur les résout par nom, `var(--dx-{moteur})` : une série de plus au
+  // jeu de données demande une teinte de plus ici et dans `styles-dark.scss`.
   --dx-marker: #2a78d6;
   --dx-chandra: #eb6834;
 
@@ -907,4 +909,264 @@ table.dx-grid col.dx-col-hl {
 
 .dx-tip.dx-on {
   opacity: 1;
+}
+
+// ── Fac-similé de la source imprimée ────────────────────────────────────────
+//
+// La page « Problèmes de mise en forme » doit d'abord montrer le filetage du PDF, sans
+// quoi la comparaison des deux écritures n'a pas d'arbitre. Le filetage est reproduit en
+// CSS et non par une image : il reste lisible dans les deux thèmes, à toute largeur, et
+// aucune donnée extraite n'entre dans le dépôt.
+
+// Cellule d'angle barrée d'une diagonale, deux légendes de part et d'autre. La diagonale
+// est un dégradé et non une bordure : c'est le seul moyen de tracer un trait en biais
+// dans une cellule de tableau.
+table.dx-grid td.dx-src-corner {
+  min-width: 15rem;
+  padding: 0.5rem 0.6rem;
+  background-image: linear-gradient(
+    to right top,
+    transparent calc(50% - 0.5px),
+    var(--dx-rule) calc(50% - 0.5px),
+    var(--dx-rule) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
+}
+
+.dx-src-corner-top,
+.dx-src-corner-bottom {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--dx-muted);
+}
+
+.dx-src-corner-top {
+  text-align: right;
+}
+
+.dx-src-corner-bottom {
+  text-align: left;
+  margin-top: 1.4rem;
+}
+
+// Trois lignes de texte dans une seule cellule encadrée : c'est tout l'objet de la
+// démonstration, l'intertitre et la raison sociale partagent la cellule.
+.dx-src-inter,
+.dx-src-name {
+  display: block;
+}
+
+.dx-src-inter {
+  color: var(--dx-ink-2);
+  font-weight: 650;
+}
+
+// Les montants du PDF sont alignés sur la dernière ligne de texte de la cellule voisine.
+table.dx-grid td.dx-src-bottom {
+  vertical-align: bottom;
+}
+
+// Colonnes et lignes repliées : l'élision doit se voir, jamais se deviner.
+table.dx-grid tr.dx-src-gap td,
+table.dx-grid td.dx-src-more {
+  background: var(--dx-surface-2);
+  color: var(--dx-muted);
+  font-size: 0.72rem;
+  font-style: italic;
+  text-align: center;
+}
+
+// L'intertitre collé devant la raison sociale, dans le libellé annoté.
+.dx-src-glued {
+  color: var(--dx-st-manquante-ink);
+  font-weight: 650;
+}
+
+// Ligne d'intertitre autonome, telle que le moteur la rend (`<td colspan>`).
+table.dx-grid td.dx-sect {
+  font-weight: 650;
+  color: var(--dx-ink-2);
+  background: var(--dx-accent-soft);
+}
+
+// ── Étapes d'un traitement ──────────────────────────────────────────────────
+
+// Les pages « Du JSON au CSV » et « Évaluation » décrivent une suite d'étapes
+// ordonnées. Elles réutilisent `.dx-finding` — même bloc numéroté — mais leur ligne
+// de tête nomme la fonction qui réalise l'étape et non une mesure : d'où `.dx-fn`,
+// neutre, là où `.dx-impact` porte l'encre d'accent d'un chiffre.
+.dx-fn {
+  font-family: #{$font-family-monospace};
+  font-size: 0.73rem;
+  padding: 0.14rem 0.5rem;
+  border: 1px solid var(--dx-hairline);
+  border-radius: 3px;
+  background: var(--dx-surface);
+  color: var(--dx-ink-2);
+}
+
+// ── Chaîne de traitement ────────────────────────────────────────────────────
+
+// Une étape = une boîte, la flèche entre deux boîtes porte ce qui circule. Le sens
+// de lecture reste vertical à toute largeur : les libellés d'étape sont trop longs
+// pour tenir sur une ligne, et une chaîne en colonne se lit sans défilement latéral.
+.dx-flow {
+  margin: 1.8rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.dx-flow-step {
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  border-left: 3px solid var(--dx-accent);
+  padding: 0.72rem 0.9rem;
+}
+
+.dx-flow-step.dx-flow-aside {
+  border-left-color: var(--dx-rule);
+  margin-left: 2.2rem;
+}
+
+.dx-flow-name {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.dx-flow-desc {
+  display: block;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  margin-top: 0.15rem;
+}
+
+.dx-flow-code {
+  font-family: #{$font-family-monospace};
+  font-size: 0.73rem;
+  color: var(--dx-muted);
+}
+
+// La flèche porte le format qui circule : c'est l'information la plus utile de la
+// chaîne, davantage que les boîtes elles-mêmes.
+.dx-flow-arrow {
+  padding: 0.32rem 0 0.32rem 0.9rem;
+  font-size: 0.75rem;
+  color: var(--dx-muted);
+  font-family: #{$font-family-monospace};
+
+  &::before {
+    content: "↓";
+    margin-right: 0.5rem;
+    color: var(--dx-rule);
+  }
+}
+
+// ── Blocs de code appariés ──────────────────────────────────────────────────
+
+// Deux sorties de moteur côte à côte, dans un `.dx-pane` chacune. Pandoc enveloppe
+// le contenu d'un div dans un paragraphe : c'est ce paragraphe qui doit porter la
+// répartition, sans quoi le titre et le chemin du fichier restent collés.
+.dx-pane-head > p {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.dx-pane div.sourceCode,
+.dx-pane pre {
+  margin: 0;
+}
+
+.dx-pane pre {
+  max-height: 27rem;
+  overflow: auto;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  background: var(--dx-plane);
+  border: 1px solid var(--dx-hairline);
+  padding: 0.7rem 0.8rem;
+}
+
+// Note de bas de volet : ce qu'il faut regarder dans le code au-dessus.
+.dx-pane-note {
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  margin: 0.7rem 0 0.2rem;
+}
+
+// ── Aperçu du document source, sous les grilles du comparateur ───────────────
+//
+// Replié par défaut : le navigateur ne télécharge l'image qu'à l'ouverture, et une
+// centaine de scans à 2 200 px pèsent trop pour être chargés d'office.
+
+.dx-apercu {
+  margin: 0.6rem 0 1.6rem;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+}
+
+.dx-apercu-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.86rem;
+  color: var(--dx-ink);
+}
+
+.dx-apercu-summary:hover {
+  background: var(--dx-surface-2);
+}
+
+.dx-apercu-count {
+  font-weight: 400;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+}
+
+.dx-apercu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  padding: 0.4rem 0.9rem 0.2rem;
+}
+
+.dx-apercu-fig {
+  margin: 0;
+}
+
+// Le scan est plus large que haut aussi souvent que l'inverse : on borne la hauteur pour
+// qu'une page portrait n'occupe pas trois écrans, et on laisse défiler ce qui dépasse.
+.dx-apercu-img {
+  display: block;
+  max-width: 100%;
+  max-height: 80vh;
+  margin: 0 auto;
+  background: var(--dx-plane);
+  border: 1px solid var(--dx-rule);
+}
+
+.dx-apercu-cap {
+  margin: 0.4rem 0 0;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  text-align: center;
+}
+
+.dx-apercu-note {
+  margin: 0.2rem 0 0;
+  padding: 0 0.9rem 0.7rem;
+  font-size: 0.76rem;
+  color: var(--dx-ink-2);
 }

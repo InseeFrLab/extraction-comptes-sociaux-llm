@@ -36,6 +36,7 @@ from extraction_common.s3 import get_s3_fs  # noqa: E402
 
 BUCKET = "projet-extraction-tableaux"
 S3_ANNOTATIONS = f"{BUCKET}/annotations/clean"
+S3_APERCUS = f"{BUCKET}/reprise/apercus"
 METHODS: dict[str, str] = {
     "marker": f"{BUCKET}/reprise/output_csv/marker",
     "chandra": f"{BUCKET}/reprise/output_csv/chandra",
@@ -235,6 +236,68 @@ def compare_pair(ann: pd.DataFrame, pred: pd.DataFrame) -> dict | None:
     }
 
 
+# ── Aperçus des documents sources ─────────────────────────────────────────────
+
+APERCUS_RACINE = Path(__file__).parent / "data" / "apercus"
+
+# Un identifiant de document peut porter espaces et parenthèses — `_2511_431980275_TAB_F164
+# - Tableau des filiales et participations 31122022 (002)`. Le nom S3 les garde, pour rester
+# traçable ; le fichier publié par le site est ramené à un jeu de caractères sûr en URL.
+_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slug(nom: str) -> str:
+    """Ramène un nom de fichier à des caractères sûrs en URL.
+
+    Args:
+        nom: nom de fichier d'origine.
+
+    Returns:
+        Le même nom, tout caractère hors `[A-Za-z0-9._-]` remplacé par `_`.
+    """
+    return _SLUG_RE.sub("_", nom)
+
+
+def telecharger_apercus(fs, prefix: str, dossier: str, cle_de_stem) -> dict[str, list[str]]:
+    """Rapatrie les aperçus S3 dans `data/apercus/{dossier}` et les indexe par document.
+
+    Les aperçus sont fabriqués une fois par `scripts/apercus.py` et déposés sur S3 : les
+    reconstruire ici ferait retélécharger plusieurs gigaoctets de sources à chaque build.
+
+    Args:
+        fs: système de fichiers S3.
+        prefix: dossier S3 des aperçus.
+        dossier: sous-dossier local, sous `data/apercus/`.
+        cle_de_stem: fonction rendant, pour le nom d'un aperçu, le document auquel il
+            appartient. Plusieurs aperçus par document sont conservés dans l'ordre du nom,
+            qui est celui des pages.
+
+    Returns:
+        {document: [chemin relatif utilisable dans la page, …]}. Vide si le dossier S3
+        n'existe pas — le site reste publiable sans les aperçus.
+    """
+    cible = APERCUS_RACINE / dossier
+    chemins = sorted(fs.glob(f"{prefix}/*.jpg"))
+    if not chemins:
+        print(f"  [WARN] aucun aperçu dans s3://{prefix} — lancer `uv run apercus.py`")
+        return {}
+
+    cible.mkdir(parents=True, exist_ok=True)
+    index: dict[str, list[str]] = {}
+    octets = 0
+    for chemin in chemins:
+        nom = chemin.rsplit("/", 1)[-1]
+        with fs.open(chemin, "rb") as f:
+            contenu = f.read()
+        (cible / _slug(nom)).write_bytes(contenu)
+        octets += len(contenu)
+        index.setdefault(cle_de_stem(nom.removesuffix(".jpg")), []).append(
+            f"data/apercus/{dossier}/{_slug(nom)}"
+        )
+    print(f"  {len(chemins)} aperçus, {octets / 1e6:.1f} Mo → {cible}")
+    return index
+
+
 # ── Assemblage ────────────────────────────────────────────────────────────────
 
 
@@ -317,6 +380,17 @@ def build(limit: int | None = None) -> dict:
                 ),
                 flush=True,
             )
+
+    print("Aperçus des documents…", flush=True)
+    # `{siren}_p{page}.jpg` : le rang après `_p` est le numéro de page, et le tri par nom
+    # suffit tant qu'un document ne dépasse pas neuf pages — le corpus plafonne à trois.
+    apercus = telecharger_apercus(
+        fs, S3_APERCUS, "comptes-sociaux", lambda stem: stem.rsplit("_p", 1)[0]
+    )
+    for entry in tables:
+        images = apercus.get(E._base_stem(entry["id"]), [])
+        if images:
+            entry["apercus"] = images
 
     payload = {
         "meta": {

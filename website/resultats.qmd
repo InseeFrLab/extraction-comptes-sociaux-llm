@@ -1,47 +1,41 @@
 ---
-title: "Chiffres et cas"
+title: "Résultats"
 subtitle: "Toutes les mesures du diagnostic, et les cas particuliers rencontrés"
 ---
+
+Cette page ne décrit pas la méthode — elle est sur la page
+[Évaluation](evaluation.qmd) — mais ce qu'elle donne sur le corpus.
 
 ## Périmètre mesuré
 
 | Élément | Compte |
 |---|---:|
 | PDF de comptes sociaux scannés | 48 |
-| Tableaux annotés à la main (`annotations/clean/*.xlsx`) | 75 |
+| Pages traitées | 55 |
+| Tableaux annotés à la main (`annotations/clean/*.xlsx`) | 77 |
 | CSV produits par marker | 78 |
-| CSV produits par chandra | 88 |
+| CSV produits par chandra | 79 |
 | CSV produits par opendataloader | 0 |
-| Paires annotation/prédiction évaluées | 144 |
+| Paires annotation/prédiction évaluées | 148 — marker 72, chandra 76 |
 
 Toutes les mesures sont calculées avec les fonctions d'évaluation du dépôt, sur les
 grilles de la conversion courante et sur le parquet régénéré au même moment : page et
 parquet décrivent le même état du pipeline.
 
 ::: {.callout-note appearance="simple"}
-## Les tableaux ne sont pas recollés
+## Deux points de méthode à garder en tête
 
-Un tableau à cheval sur deux pages reste mesuré page par page, des deux côtés : c'est
-ainsi qu'il est annoté — un fichier par page, chacun avec son en-tête — et la mesure suit
-cette granularité plutôt que d'en imposer une autre.
+**Un tableau à cheval sur deux pages est annoté page par page**, et la mesure suit cette
+granularité. Chandra, appelé page par page, s'y conforme naturellement ; marker voit le PDF
+entier et rend parfois le tableau d'un seul tenant, auquel cas **sa** référence est regroupée
+d'autant — celle de chandra n'est jamais touchée.
 
-**Chandra est appelé page par page et ne recolle jamais rien** : il couvre les deux pages,
-d'où ses 74 paires évaluées. **Marker reçoit le PDF entier**, et son `TableGroup` enjambe
-parfois la coupure — sur 3 des 6 documents multi-pages du corpus, pas systématiquement.
-
-Face à un tableau marker d'un seul tenant, **la référence de marker est regroupée
-d'autant**, et elle seule : c'est la seule façon de comparer un tableau entier à un tableau
-entier. Deux signatures, et deux seulement, désignent une coupure de page — à largeur de
-colonnes identique : la suite n'a pas d'en-tête de colonnes, ou elle réimprime exactement le
-même. Quatre documents sont concernés, ce qui ramène les annotations marker orphelines de 5
-à 1 et remet **147 cellules dans le dénominateur, dont 103 correctement extraites** qui
-n'étaient jamais comptées.
-
-Deux tableaux réellement distincts ne sont jamais regroupés pour faire tomber le compte : la
-sous-détection du moteur reste alors visible. La référence de chandra n'est jamais touchée.
+**Les paires diffèrent donc d'un moteur à l'autre** : 72 pour marker, 76 pour chandra. C'est
+ce qui explique que les dénominateurs ne coïncident pas d'une colonne à l'autre dans les
+tableaux ci-dessous. [Méthode complète](evaluation.qmd#paires).
 :::
 
-## Erreurs de transcription
+## Erreurs de transcription {#erreurs-de-transcription}
 
 Ce chiffre borne tout le reste : si les caractères étaient mal lus, aucun travail sur la
 structure ne servirait à rien.
@@ -65,52 +59,12 @@ structure ne servirait à rien.
 </div>
 ```
 
-### Comment ce chiffre est calculé
-
 Ce n'est pas une comparaison de chaînes : une valeur mal placée, ou écrite autrement,
-serait comptée comme mal lue. Six tests sont donc appliqués **dans cet ordre, de la
-structure vers la lecture**, chaque cellule tombant dans la première catégorie qui
-s'applique (`cell_status`, [`website/build_data.py`](https://github.com/InseeFrLab/extraction-comptes-sociaux-llm/blob/main/website/build_data.py)).
-
-1. **Dénominateur** — les cellules de la zone de données que `_looks_numeric` reconnaît
-   comme numériques, cellules vides de l'annotation exclues : 5 518 chez marker, 5 543
-   chez chandra. Les dénominateurs diffèrent car chaque moteur n'apparie pas le même
-   nombre de tableaux annotés — 72 pour marker, 76 pour chandra.
-2. **Appariement** — `_match_headers` apparie lignes et colonnes (Levenshtein, seuil 0,5,
-   matching stable). Sans ligne **et** colonne appariées, on ne sait pas quelle cellule
-   prédite regarder : statut `non-appariee`, jamais imputé à la lecture.
-3. **Normalisation** — `_norm_num` ramène à une forme canonique (séparateurs de milliers,
-   décimale, parenthèses comptables, suffixes d'unité, `%`). Égalité → récupérée.
-4. **Test hors position** — la valeur existe-t-elle **ailleurs** dans la grille prédite ?
-   Si oui, la lecture est bonne et c'est le placement qui a échoué (`deplacee`). **C'est ce
-   test qui empêche d'imputer un décalage de colonne à l'OCR.**
-5. **Clé chiffres** — `_digits()` ne garde que les chiffres. Chiffres identiques mais
-   formes différentes → convention d'écriture, pas lecture.
-6. **Distance** — Levenshtein sur les chiffres ≤ 2 → **erreur de lecture**. Au-delà :
-   « valeur franchement différente », trop loin pour conclure.
-
-::: {.callout-note appearance="simple"}
-## Le piège du signe `%`
-
-`_norm_num` retirait le `%` avec les autres suffixes d'unité **avant** la conversion en
-décimale : `0,7` attendu contre `70%` prédit devenait `0.7` contre `70`, soit deux chiffres
-d'écart, donc une erreur de lecture. Cette seule confusion gonflait le compte de 64
-cellules marker et 69 chandra, soit **2,1 % au lieu de 1,0 % chez marker et 2,1 % au lieu
-de 0,9 % chez chandra**. Corrigé dans
-`build_data.py` ; cette page intègre la correction.
-:::
-
-::: {.callout-note appearance="simple"}
-## Le piège du tiret
-
-Même mécanique, autre glyphe : l'annotation écrit `-` là où les moteurs rendent `—`. La
-comparaison portant sur la chaîne brute pour les cellules non numériques, ces cellules
-étaient comptées « texte à la place du nombre » — 14 sur le seul `TAB_552096281_2`. Toutes
-les variantes de tiret — cadratin, demi-cadratin, trait d'union, signe moins Unicode —
-sont désormais ramenées au trait d'union avant comparaison (`_unify_dashes`), qu'elles
-marquent une absence, un signe négatif ou un séparateur de libellé. Le poste tombe de 16 à
-2 cellules chez chandra, et 14 cellules rejoignent les récupérées.
-:::
+serait comptée comme mal lue. Six tests sont appliqués dans l'ordre, de la structure vers
+la lecture, et chaque cellule tombe dans la première catégorie qui s'applique — c'est
+l'[échelle de classement](evaluation.qmd#classement) décrite sur la page Évaluation. Le
+dénominateur est celui des cellules numériques non vides de la zone de données : **5 518
+chez marker, 5 543 chez chandra**.
 
 ### Nature des erreurs
 
@@ -151,14 +105,14 @@ Trois postes relèvent aussi de la lecture, mais sont comptés à part car leur 
 :::
 
 - Total du poste « Lecture » : **6,0 % des cellules chez marker, 1,2 % chez chandra** —
-  contre 38,2 % et 15,9 % pour le poste « Structure » ([décomposition
-  complète](#décomposition-des-cellules-attendues)).
+  contre 38,2 % et 15,8 % pour le poste « Structure » ([décomposition
+  complète](#decomposition-cellules)).
 - Une part du résidu n'est même pas imputable au moteur : `862 00` attendu contre `862 000`
   prédit, ou `35 0380 200` contre `35 038 200`, sont des coquilles de l'annotation.
 
-### Bien lu, écrit autrement
+### Bien lu, écrit autrement {#bien-lu-ecrit-autrement}
 
-522 des 3 075 cellules récupérées chez marker (17,0 %) et 572 des 4 591 chez chandra
+522 des 3 075 cellules récupérées chez marker (17,0 %) et 573 des 4 600 chez chandra
 (12,5 %) ne sont identiques qu'**après** normalisation :
 
 ::: {.dx-scroll}
@@ -167,28 +121,55 @@ Trois postes relèvent aussi de la lecture, mais sont comptés à part car leur 
 |---|---:|---:|---|
 | Séparateur de milliers seul | 331 | 335 | `3342864` → `3 342 864` |
 | Virgule contre point décimal | 37 | 36 | `2.08` → `2,08` |
-| Autre convention | 154 | 201 | `1` → `100%`, `1 976` → `(1 976)` |
+| Autre convention | 154 | 202 | `1` → `100%`, `1 976` → `(1 976)` |
 
 :::
 
 Aucune n'est une erreur de lecture — mais toutes le deviendraient si la comparaison se
-faisait caractère par caractère. C'est la mesure de ce que l'étape 3 rattrape.
+faisait caractère par caractère. C'est la mesure de ce que la normalisation rattrape.
 
-## Métriques publiées
+## Métriques publiées {#metriques-publiees}
 
 Moyennes par fichier, selon la sémantique du dépôt (`dropna().mean()`). La colonne « hors
 vides » exclut les cellules vides de l'annotation et pondère par cellule, non par fichier
-— voir [la réserve sur la mesure](#ce-que-les-métriques-ne-disent-pas).
+— voir [la réserve sur la mesure](#reserves).
 
 ::: {.dx-scroll}
 
 | Méthode | Paires | `col_recovery` | `row_recovery` | `numeric_recovery` | hors vides, /cellule | `total_extraction` |
 |---|---:|---:|---:|---:|---:|---:|
-| **marker** | 72 | **0,877** | **0,861** | **0,725** | **0,588** | **0,375** |
-| **chandra** | 76 | **0,980** | **0,958** | **0,896** | **0,802** | **0,474** |
-| marker_last_work | 48 | 0,724 | 0,686 | 0,440 | — | 0,042 |
+| **marker** | 72 | **0,877** | **0,861** | **0,734** | **0,557** | **0,389** |
+| **chandra** | 76 | **0,980** | **0,958** | **0,910** | **0,820** | **0,539** |
+| marker_last_work | 48 | 0,724 | 0,686 | 0,455 | — | 0,042 |
 | opendataloader | 0 | — | — | — | — | — |
 
+:::
+
+::: {.callout-note appearance="simple"}
+## Ces chiffres intègrent le portage des écarts d'écriture
+
+Le séparateur décimal, le signe négatif détaché et les parenthèses comptables sont désormais
+absorbés par la normalisation, et la comparaison de cellule n'a plus qu'un seul chemin
+([méthode](evaluation.qmd#normalisation)). Effet sur les deux moteurs mesurés :
+
+| | `numeric_recovery` | hors vides, /cellule | `total_extraction` |
+|---|---|---|---|
+| **marker** | 0,725 → **0,734** | 54,2 → **55,7 %** | 27 → **28** tableaux parfaits |
+| **chandra** | 0,897 → **0,910** | 80,0 → **82,0 %** | 36 → **41** tableaux parfaits |
+
+`col_recovery` et `row_recovery` sont inchangés : le correctif ne touche que la comparaison
+des valeurs, pas l'appariement.
+
+**Toute la page a été recalculée** sur cet état : décomposition, entonnoir, distribution du
+score, quartiles de taille, hauteur d'en-tête, décalage global, causes de non-appariement et
+concordance des dimensions. Le parquet `reprise/eval/evaluation.parquet` a été régénéré au
+même moment, et les quatre métriques du tableau ci-dessus en sortent directement.
+
+Une réserve subsiste : **la décomposition emprunte la normalisation de `build_data.py`**, qui
+*retire* les unités en suffixe là où l'évaluation ne le fait pas. D'où 83,0 % de cellules
+récupérées dans la [décomposition](#decomposition-cellules) contre 82,0 % dans le tableau
+ci-dessus, chez chandra : une quarantaine de cellules, la même divergence pour tous les
+postes.
 :::
 
 ::: {.callout-note appearance="simple"}
@@ -197,15 +178,15 @@ vides » exclut les cellules vides de l'annotation et pondère par cellule, non 
 - `opendataloader` ne produit aucun CSV, donc aucune paire.
 - `marker_last_work` est appariée par un chemin de code distinct
   (`_list_pairs_from_correspondances`) : sa fiabilité reste à établir (voir [plus
-  bas](#marker_last_work-régression-ou-appariement-cassé)).
+  bas](#marker-last-work)).
 :::
 
 **Les médianes sont nettement au-dessus des moyennes** : `numeric_recovery` médian vaut
-0,881 pour marker (moyenne 0,725) et 1,000 pour chandra (moyenne 0,896). Le tableau
+0,917 pour marker (moyenne 0,734) et 1,000 pour chandra (moyenne 0,910). Le tableau
 *typique* est donc bien mieux extrait que la moyenne ne le laisse croire : une minorité de
 tableaux à zéro la tire vers le bas.
 
-### Distribution du score d'extraction correcte
+### Distribution du score d'extraction correcte {#distribution-score}
 
 Pour l'objectiver, un score unique par tableau agrégeant structure et valeurs :
 
@@ -222,7 +203,7 @@ Pour l'objectiver, un score unique par tableau agrégeant structure et valeurs :
 Les trois termes sont pondérés par leur effectif réel : les cellules de données dominent
 sur les grands tableaux, la structure pèse plus sur les petits. Les cellules vides de
 l'annotation sont exclues, pour les raisons exposées [plus
-bas](#un-tiers-des-cellules-numériques-comptées-sont-vides).
+bas](#cellules-vides).
 
 ```{=html}
 <figure class="dx-fig">
@@ -316,10 +297,10 @@ bas](#un-tiers-des-cellules-numériques-comptées-sont-vides).
       <div class="dx-hist-marker"></div>
       <div class="dx-hist-marker"></div>
       <div class="dx-hist-marker"></div>
-      <div class="dx-hist-marker"><span>▲ moyenne</span><span>marker 0,764</span></div>
-      <div class="dx-hist-marker"><span>▲ moyenne</span><span>chandra 0,837</span></div>
-      <div class="dx-hist-marker"><span>▲ médianes</span><span>marker 0,932 · chandra 0,996</span></div>
       <div class="dx-hist-marker"></div>
+      <div class="dx-hist-marker"><span>▲ moyenne</span><span>marker 0,783</span></div>
+      <div class="dx-hist-marker"><span>▲ médiane</span><span>marker 0,937</span></div>
+      <div class="dx-hist-marker"><span>▲ chandra</span><span>moy. 0,931 · méd. 1,000</span></div>
     </div>
   </div>
   <figcaption class="dx-fig-note">Les effectifs se massent aux deux extrémités et se creusent
@@ -334,17 +315,17 @@ bas](#un-tiers-des-cellules-numériques-comptées-sont-vides).
 
 | Tranche de score | marker | chandra |
 |---|---:|---:|
-| 0–10 % | 7 | 5 |
-| 10–20 % | 1 | 2 |
-| 20–30 % | 2 | 1 |
+| 0–10 % | 5 | 0 |
+| 10–20 % | 1 | 0 |
+| 20–30 % | 3 | 1 |
 | 30–40 % | 1 | 1 |
-| 40–50 % | 1 | 2 |
-| 50–60 % | 5 | 1 |
-| 60–70 % | 1 | 2 |
-| 70–80 % | 7 | 3 |
-| 80–90 % | 9 | 4 |
-| 90–100 % | 36 | 53 |
-| **Total** | **70** | **74** |
+| 40–50 % | 1 | 1 |
+| 50–60 % | 4 | 0 |
+| 60–70 % | 3 | 3 |
+| 70–80 % | 8 | 2 |
+| 80–90 % | 9 | 6 |
+| 90–100 % | 37 | 62 |
+| **Total** | **72** | **76** |
 
 : Effectifs par tranche. Un tableau dont toutes les lignes, toutes les colonnes et toutes les valeurs numériques sont correctes obtient 100 %.
 
@@ -356,18 +337,18 @@ La forme est franchement bimodale, et elle l'est pour les deux moteurs :
 
 | | marker | chandra |
 |---|---:|---:|
-| Score exactement 100 % | 27 | 37 |
-| Score sous 5 % | 7 | 4 |
-| Tranches extrêmes (< 20 % ou ≥ 80 %) | 53 (76 %) | 64 (86 %) |
-| Milieu (20–80 %) | 17 (24 %) | 10 (14 %) |
-| Moyenne du score | 0,764 | 0,837 |
-| Médiane du score | 0,932 | 0,996 |
+| Score exactement 100 % | 28 | 41 |
+| Score sous 5 % | 5 | 0 |
+| Tranches extrêmes (< 20 % ou ≥ 80 %) | 52 (72 %) | 68 (89 %) |
+| Milieu (20–80 %) | 20 (28 %) | 8 (11 %) |
+| Moyenne du score | 0,783 | 0,931 |
+| Médiane du score | 0,937 | 1,000 |
 
 :::
 
 Trois lectures s'en dégagent :
 
-- **L'échec est tout-ou-rien.** 28 tableaux marker et 40 chandra sont parfaits ; 5 tableaux
+- **L'échec est tout-ou-rien.** 28 tableaux marker et 41 chandra sont parfaits ; 5 tableaux
   marker sont sous 5 %, plus aucun chez chandra. Un tableau rate rarement « un peu » : soit la structure tient et presque tout
   suit, soit elle se décale et tout tombe. C'est la signature d'une erreur de structure
   propagée, pas d'une dégradation graduelle de la lecture.
@@ -379,7 +360,7 @@ Trois lectures s'en dégagent :
   de structure d'en-tête présent dès la source. Aucune règle de mise en forme ne les
   rattrape.
 
-## Entonnoir d'attrition
+## Entonnoir d'attrition {#entonnoir-dattrition}
 
 Chaque valeur numérique attendue a été suivie jusqu'à sa destination. La mesure porte sur
 les valeurs d'au moins quatre chiffres, pour écarter les coïncidences (un « 0 » ou un
@@ -455,9 +436,9 @@ les valeurs d'au moins quatre chiffres, pour écarter les coïncidences (un « 0
       <div class="dx-bar-row">
         <div class="dx-bar-lab">À la bonne cellule</div>
         <div class="dx-bar-track">
-          <div class="dx-bar" style="width:81.8%;background:var(--dx-chandra)"></div>
-          <span class="dx-bar-val">81,8&nbsp;% <span class="dx-n">· 2 578</span></span>
-          <span class="dx-bar-loss">−15,5 pts</span>
+          <div class="dx-bar" style="width:82.1%;background:var(--dx-chandra)"></div>
+          <span class="dx-bar-val">82,1&nbsp;% <span class="dx-n">· 2 586</span></span>
+          <span class="dx-bar-loss">−15,2 pts</span>
         </div>
       </div>
     </div>
@@ -474,14 +455,14 @@ Table des mêmes données, pour lecture directe :
 | Attendues (≥ 4 chiffres) | 3 143 | 100,0 | 3 151 | 100,0 |
 | Lues quelque part dans le SIREN | 2 918 | 92,8 | 3 066 | 97,3 |
 | Dans le bon CSV | 2 693 | 85,7 | 3 066 | 97,3 |
-| À la bonne cellule | **1 856** | **59,1** | **2 578** | **81,8** |
+| À la bonne cellule | **1 856** | **59,1** | **2 586** | **82,1** |
 
 : Les deux premières marches mesurent la lecture, la troisième l'appariement des tableaux
 entre eux, la dernière le placement dans la grille. C'est la dernière qui coûte le plus.
 
 :::
 
-## Décomposition des cellules attendues
+## Décomposition des cellules attendues {#decomposition-cellules}
 
 Cellules numériques **non vides** de la zone de données, tous fichiers confondus : 5 518
 pour marker, 5 543 pour chandra. Chaque cellule est classée dans la première catégorie qui
@@ -491,13 +472,13 @@ s'applique, de la structure vers la lecture.
 
 | Devenir de la cellule | marker | % | chandra | % | Nature |
 |---|---:|---:|---:|---:|---|
-| **Récupérée** | **3 075** | **55,7** | **4 591** | **82,8** | — |
+| **Récupérée** | **3 075** | **55,7** | **4 600** | **83,0** | — |
 | Ligne *et* colonne non appariées | 513 | 9,3 | 1 | 0,0 | Structure |
 | Colonne non appariée | 324 | 5,9 | 144 | 2,6 | Structure |
 | Ligne non appariée | 584 | 10,6 | 63 | 1,1 | Structure |
-| Bonne ligne, colonne décalée | 209 | 3,8 | 497 | 9,0 | Structure |
-| Cellule vide, valeur présente ailleurs | 360 | 6,5 | 117 | 2,1 | Structure |
-| Autre décalage | 120 | 2,2 | 62 | 1,1 | Structure |
+| Bonne ligne, colonne décalée | 210 | 3,8 | 496 | 8,9 | Structure |
+| Cellule vide, valeur présente ailleurs | 360 | 6,5 | 116 | 2,1 | Structure |
+| Autre décalage | 119 | 2,2 | 55 | 1,0 | Structure |
 | Cellule vide, valeur nulle part | 227 | 4,1 | 1 | 0,0 | Lecture |
 | Format seul | 3 | 0,1 | 3 | 0,1 | Normalisation |
 | Erreur de lecture de chiffres | 57 | 1,0 | 49 | 0,9 | Lecture |
@@ -508,16 +489,16 @@ s'applique, de la structure vers la lecture.
 :::
 
 - **Structure contre lecture : six contre un.** Les postes « Structure » pèsent 38,2 %
-  (marker) et 15,9 % (chandra), les postes « Lecture » 6,0 % et 1,2 %. À effort égal,
+  (marker) et 15,8 % (chandra), les postes « Lecture » 6,0 % et 1,2 %. À effort égal,
   corriger l'alignement rapporte six fois plus que corriger l'OCR.
 - **Les deux moteurs échouent différemment.** Chez marker, la structure entière décroche —
   9,3 % des cellules ont ligne *et* colonne non appariées. Chez chandra ce poste est
   tombé à **une seule cellule** depuis que la graphie ne distingue plus deux libellés : il
-  ne reste qu'un décalage local, 9,0 % des cellules sur la bonne ligne mais à une colonne
+  ne reste qu'un décalage local, 8,9 % des cellules sur la bonne ligne mais à une colonne
   de là, contre 3,8 % chez marker.
 - **Le poste « Format seul » est quasi vide** parce que `_norm_num` absorbe ces écarts en
   amont : ces cellules comptent comme récupérées et sont dénombrées dans [« Bien lu, écrit
-  autrement »](#bien-lu-écrit-autrement).
+  autrement »](#bien-lu-ecrit-autrement).
 
 ### Exemples par catégorie
 
@@ -544,7 +525,7 @@ Cas réels observés dans les sorties marker, valeurs telles qu'extraites.
 
 :::
 
-## Effet de la taille du tableau
+## Effet de la taille du tableau {#effet-taille}
 
 Quartiles du nombre de cellules de l'annotation. **La qualité s'effondre avec la taille** —
 signe que l'échec est structurel : un grand tableau offre plus d'occasions de décaler
@@ -552,28 +533,28 @@ l'en-tête, et un décalage coûte tout le tableau.
 
 ::: {.dx-scroll}
 
-| Quartile de taille | marker, `numeric_recovery` | `total_extraction` | chandra, `numeric_recovery` | `total_extraction` |
+| Quartile de taille | marker, récup. par cellule | part de tableaux parfaits | chandra, récup. par cellule | part de tableaux parfaits |
 |---|---:|---:|---:|---:|
-| Q1 — 4 à 40 cellules | 0,908 | 0,800 | 1,000 | 1,000 |
-| Q2 — 42 à 102 cellules | 0,786 | 0,500 | 0,830 | 0,316 |
-| Q3 — 108 à 252 cellules | 0,596 | 0,125 | 0,769 | 0,294 |
-| Q4 — 264 à 726 cellules | 0,541 | 0,000 | 0,569 | 0,059 |
+| Q1 — 4 à 33 cellules | 0,882 | 0,833 | 1,000 | 1,000 |
+| Q2 — 40 à 99 cellules | 0,899 | 0,611 | 0,986 | 0,579 |
+| Q3 — 96 à 252 cellules | 0,598 | 0,111 | 0,921 | 0,474 |
+| Q4 — 252 à 726 cellules | 0,562 | 0,000 | 0,808 | 0,105 |
 
-: Les bornes des quartiles diffèrent de quelques cellules entre les deux moteurs ; elles
-sont données ici d'après le découpage marker.
+: Chaque moteur est découpé sur ses propres quartiles, d'où des bornes qui diffèrent de
+quelques cellules. La récupération est pondérée par cellule, hors cellules vides.
 
 :::
 
 Conséquence méthodologique : **une moyenne par fichier surpondère les petits tableaux.**
 D'où la colonne « hors vides, par cellule », plus basse que la moyenne publiée.
 
-## Le meilleur prédicteur : la hauteur d'en-tête
+## Le meilleur prédicteur : la hauteur d'en-tête {#hauteur-entete}
 
 ### Un seul booléen sépare un bon fichier d'un mauvais
 
-Il sépare, mais il ne se corrige pas : forcer la bonne hauteur ou décaler la grille
-d'autant ne rend que 0,0 pt chez marker et 1,6 pt chez chandra, et une lecture purement
-positionnelle plafonnerait à 50,7 % sur ces fichiers ([rejeu du
+Il sépare, mais il ne se corrige pas : rejoués sur les seuls fichiers discordants, les deux
+remèdes **dégradent** la mesure — forcer la bonne hauteur coûte 3,2 pts de récupération chez
+marker et 4,5 chez chandra, décaler la grille bien davantage ([rejeu du
 levier](ameliorations.qmd)).
 
 ```{=html}
@@ -588,46 +569,46 @@ levier](ameliorations.qmd)).
     <span><span class="dx-swatch" style="background:var(--dx-chandra)"></span>chandra</span>
   </div>
   <div class="dx-facet">
-    <div class="dx-facet-name">En-tête concordant — marker 39 tableaux, chandra 53 tableaux</div>
+    <div class="dx-facet-name">En-tête concordant — marker 41 tableaux, chandra 58 tableaux</div>
     <div class="dx-bars">
       <div class="dx-bar-row">
         <div class="dx-bar-lab">marker</div>
         <div class="dx-bar-track">
-          <div class="dx-bar" style="width:64.7%;background:var(--dx-marker)"></div>
-          <span class="dx-bar-val">64,7&nbsp;%</span>
+          <div class="dx-bar" style="width:65.1%;background:var(--dx-marker)"></div>
+          <span class="dx-bar-val">65,1&nbsp;%</span>
         </div>
       </div>
       <div class="dx-bar-row">
         <div class="dx-bar-lab">chandra</div>
         <div class="dx-bar-track">
-          <div class="dx-bar" style="width:91.7%;background:var(--dx-chandra)"></div>
-          <span class="dx-bar-val">91,7&nbsp;%</span>
+          <div class="dx-bar" style="width:92.6%;background:var(--dx-chandra)"></div>
+          <span class="dx-bar-val">92,6&nbsp;%</span>
         </div>
       </div>
     </div>
   </div>
   <div class="dx-facet">
-    <div class="dx-facet-name">En-tête discordant — marker 31 tableaux, chandra 21 tableaux</div>
+    <div class="dx-facet-name">En-tête discordant — marker 31 tableaux, chandra 18 tableaux</div>
     <div class="dx-bars">
       <div class="dx-bar-row">
         <div class="dx-bar-lab">marker</div>
         <div class="dx-bar-track">
-          <div class="dx-bar" style="width:43.4%;background:var(--dx-marker)"></div>
-          <span class="dx-bar-val">43,4&nbsp;%</span>
+          <div class="dx-bar" style="width:48.4%;background:var(--dx-marker)"></div>
+          <span class="dx-bar-val">48,4&nbsp;%</span>
         </div>
       </div>
       <div class="dx-bar-row">
         <div class="dx-bar-lab">chandra</div>
         <div class="dx-bar-track">
-          <div class="dx-bar" style="width:44.8%;background:var(--dx-chandra)"></div>
-          <span class="dx-bar-val">44,8&nbsp;%</span>
+          <div class="dx-bar" style="width:69.8%;background:var(--dx-chandra)"></div>
+          <span class="dx-bar-val">69,8&nbsp;%</span>
         </div>
       </div>
     </div>
   </div>
-  <figcaption class="dx-fig-note">Écart de 21 points pour marker, 47 pour chandra. La
-    hauteur d'en-tête discorde sur 44&nbsp;% des fichiers marker et 28&nbsp;% des
-    fichiers chandra.</figcaption>
+  <figcaption class="dx-fig-note">Écart de 17 points pour marker, 23 pour chandra. La
+    hauteur d'en-tête discorde sur 43&nbsp;% des fichiers marker (31 sur 72) et
+    24&nbsp;% des fichiers chandra (18 sur 76).</figcaption>
 </figure>
 ```
 
@@ -642,30 +623,30 @@ annotation), pour marker.
 
 | Δligne optimal ↓ / écart d'en-tête → | −5 | −4 | −2 | −1 | 0 | +1 | +2 | +3 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| −5 | 1 | | | | | | | |
+| −5 | **1** | | | | | | | |
 | −2 | | | **1** | | | | | |
 | −1 | | | | **6** | | | | |
-| 0 | | 1 | 1 | 2 | **36** | 2 | | |
-| +1 | | 1 | | | 1 | **11** | 1 | |
+| 0 | | | | 2 | **38** | 2 | | |
+| +1 | | 1 | | | 1 | **13** | 1 | |
 | +2 | | | | | 1 | | **1** | |
 | +3 | | | | | | | | **1** |
 
 :::
 
-**La diagonale concentre 57 fichiers sur 67.** Quand la hauteur d'en-tête concorde, le
-décalage optimal est nul 36 fois sur 38 ; quand elle diffère de +1, il vaut +1 dans 11 cas
-sur 13.
+**La diagonale concentre 61 fichiers sur 69.** Quand la hauteur d'en-tête concorde, le
+décalage optimal est nul 38 fois sur 42 ; quand elle diffère de +1, il vaut +1 dans 13 cas
+sur 15.
 
 ::: {.dx-scroll}
 
 | Décalage optimal | marker | chandra |
 |---|---:|---:|
-| (0, 0) — aucun décalage | 39 | 53 |
-| (+1, 0) — une ligne | 14 | 5 |
-| (−1, 0) — une ligne | 5 | 2 |
-| (±2, 0) | 3 | 7 |
-| Autre (dont Δcolonne ≠ 0) | 6 | 4 |
-| **Fichiers alignés à ≥ 90 % par un simple décalage** | **39 / 67** | **53 / 71** |
+| (0, 0) — aucun décalage | 40 | 55 |
+| (+1, 0) — une ligne | 16 | 7 |
+| (−1, 0) — une ligne | 5 | 3 |
+| (±2, 0) | 3 | 6 |
+| Autre (dont Δcolonne ≠ 0) | 5 | 2 |
+| **Fichiers alignés à ≥ 90 % par un simple décalage** | **41 / 69** | **59 / 73** |
 
 :::
 
@@ -716,13 +697,13 @@ CSV, ligne 1 : ;;;;;Brute;Nette;;;;;                                            
 C'est le format aplati qui produisait les trois effets en cascade — hauteur d'en-tête
 comptée différemment, texte d'en-tête concaténé faux (`'Capital'` contre
 `'Capital | Nette'`), partie droite du tableau glissée d'un cran — et que la conversion
-rattrapait au mieux ([méthode détaillée](conversion.qmd#chandra-la-grille-est-déjà-là)).
+rattrapait au mieux ([méthode détaillée](conversion.qmd)).
 
 Il reste malgré tout **9,0 % de cellules « bonne ligne, colonne décalée » chez chandra
 contre 3,2 % chez marker** : la cause de ce résidu n'est plus l'absence de fusions dans le
 format d'entrée, et reste à établir.
 
-#### Ce qu'aucune correction de conversion ne rattrapera
+#### Ce qu'aucune correction de conversion ne rattrapera {#source-irreguliere}
 
 Sur les 52 fichiers à hauteur d'en-tête discordante, **49 ont une source parfaitement
 régulière** — ni ligne courte, ni sous-ligne à replacer. Le moteur y a produit une autre
@@ -748,11 +729,13 @@ dépassait le seuil de 0,5, mais l'appariement stable ne l'a pas retenu.
 
 | Cause | marker, lignes | marker, colonnes | chandra, lignes | chandra, colonnes |
 |---|---:|---:|---:|---:|
-| Apparié | 76,5 % | 83,1 % | 83,9 % | 89,1 % |
-| Absent de la prédiction (similarité < 0,3) | 15,0 % | 13,0 % | 10,1 % | 8,5 % |
-| Libellé proche mais sous le seuil (0,3–0,5) | 5,0 % | 2,9 % | 3,4 % | 1,6 % |
-| Libellé vide dans l'annotation | 2,7 % | 0,3 % | 2,5 % | 0,5 % |
-| Candidat valide raté par l'appariement stable | 0,9 % | 0,7 % | 0,1 % | 0,3 % |
+| Apparié | 81,9 % | 87,3 % | 95,0 % | 97,4 % |
+| Absent de la prédiction (similarité < 0,3) | 9,8 % | 8,8 % | 1,6 % | 0,6 % |
+| Libellé proche mais sous le seuil (0,3–0,5) | 4,7 % | 2,7 % | 1,2 % | 1,1 % |
+| Libellé vide dans l'annotation | 2,6 % | 0,3 % | 2,2 % | 0,5 % |
+| Candidat valide raté par l'appariement stable | 1,1 % | 0,8 % | 0,0 % | 0,3 % |
+
+: Effectifs : 1 198 lignes et 592 colonnes annotées chez marker, 1 208 et 620 chez chandra.
 
 :::
 
@@ -780,7 +763,7 @@ réels ne sont pas reproduits ici ; les similarités, si.
 
 ## Cas pathologiques, fichier par fichier
 
-### Tableaux découpés : le contenu est dans un autre CSV
+### Tableaux découpés : le contenu est dans un autre CSV {#tableaux-decoupes}
 
 L'appariement se fait par rang (`{siren}_1.xlsx` ↔ `{siren}_1.csv`). Quand le moteur
 découpe ou fusionne un tableau, les rangs se désynchronisent et la comparaison porte sur
@@ -794,8 +777,12 @@ des tableaux différents.
 | `TAB_682024096_2` | marker | 17 | 3 | 27 | 100 % |
 | `_0334_394331946_TAB_1` | marker | 19 | 2 | 58 | 100 % |
 | `TAB_300221017_1` | marker | 39 | 3 | 125 | 92,8 % |
+| `974_722049459_TAB_1` | chandra | 36 | 41 | 195 | 100 % |
 | `_2511_784338527_atypique_1` | marker | 37 | 8 | 27 | 66,7 % |
-| `_2511_784338527_atypique_1` | chandra | 37 | 11 | 27 | 66,7 % |
+
+: Valeurs de 4 chiffres et plus, seule convention où le test de présence ailleurs ne
+produit pas de coïncidences. `_2511_784338527_atypique_1` a quitté cette liste côté
+chandra : il dépasse désormais 40 % de récupération.
 
 :::
 
@@ -834,9 +821,10 @@ compte 2 à 3 lignes contre 17 à 39 attendues : **le tableau a été coupé, pa
   était un jusqu'au découpage des enregistrements empilés : ses deux valeurs par cellule,
   soudées en une, n'appariaient rien et 50 des 58 valeurs attendues paraissaient absentes
   de tous les CSV du SIREN. Elles y sont toutes désormais, et le fichier atteint 100 % de
-  récupération numérique chez chandra. Les pires résidus tiennent maintenant à un tiers
-  des valeurs d'un fichier : `0497_423944677_TAB_1` (36 % chez marker) et
-  `_2511_784338527_atypique_1` (33 % chez les deux).
+  récupération numérique chez chandra. Les pires résidus restants sont
+  `_2511_784338527_atypique_1` (8 % chez marker, 43 % chez chandra),
+  `_1465_775577018_TAB_1` (19 % et 17 %) et `0497_423944677_TAB_1` (23 % chez marker) —
+  dans les trois cas les valeurs sont lues, mais placées ailleurs.
 
 ### Concordance des dimensions
 
@@ -852,6 +840,8 @@ compte 2 à 3 lignes contre 17 à 39 attendues : **le tableau a été coupé, pa
 | Écart moyen de lignes | −0,85 | −0,18 |
 | Hauteur d'en-tête concordante | 41 / 72 | 58 / 76 |
 | Largeur d'en-tête de lignes concordante | 70 / 72 | 76 / 76 |
+| SIREN au bon nombre de tableaux (`table_count_accuracy`) | 41 / 48 | 44 / 48 |
+| Tableaux par SIREN, annotés → détectés | 1,52 → 1,62 | 1,60 → 1,65 |
 
 :::
 
@@ -878,9 +868,9 @@ HTML :
 Sur des comptes sociaux scannés, opendataloader traite la page comme une image sans en
 extraire de tableau.
 
-## Ce que les métriques ne disent pas
+## Ce que les métriques ne disent pas {#reserves}
 
-### Un tiers des « cellules numériques » comptées sont vides
+### Un tiers des « cellules numériques » comptées sont vides {#cellules-vides}
 
 `_looks_numeric("")` renvoie vrai : les cellules vides de l'annotation entrent dans le
 dénominateur de `numeric_recovery`, et sont créditées quand la prédiction est vide au même
@@ -890,9 +880,9 @@ endroit.
 
 | | marker | chandra |
 |---|---:|---:|
-| Cellules comptées dans `numeric_recovery` | 8 371 | 8 397 |
-| dont cellules vides de l'annotation | 2 866 (34,2 %) | 2 867 (34,1 %) |
-| Cellules vides créditées comme récupérées | 1 719 (60,0 %) | 1 868 (65,2 %) |
+| Cellules comptées dans `numeric_recovery` | 8 385 | 8 411 |
+| dont cellules vides de l'annotation | 2 867 (34,2 %) | 2 868 (34,1 %) |
+| Cellules vides créditées comme récupérées | 1 941 (67,7 %) | 2 324 (81,0 %) |
 
 :::
 
@@ -902,8 +892,8 @@ Deux lectures du même corpus :
 
 | Définition de `numeric_recovery` | marker | chandra |
 |---|---:|---:|
-| Moyenne par fichier, cellules vides incluses | 0,710 | 0,801 |
-| Hors cellules vides, pondérée par cellule | 0,542 | 0,657 |
+| Moyenne par fichier, cellules vides incluses | 0,734 | 0,910 |
+| Hors cellules vides, pondérée par cellule | 0,557 | 0,820 |
 
 :::
 
@@ -911,17 +901,15 @@ La métrique récompense donc en partie le fait de ne rien écrire, et la moyenn
 surpondère les petits tableaux. **La seconde ligne est celle qui décrit le travail
 restant.**
 
-### `--cell-delta` ne fait pas ce qu'il annonce
+Deux autres réserves relèvent de la méthode et sont traitées sur la page Évaluation : la
+tolérance `--cell-delta`, qui **ne s'applique pas à `numeric_recovery`** contrairement à ce
+qu'annonce son aide, et l'appariement des paires **par rang**, qui compare parfois deux
+tableaux différents ([détail](evaluation.qmd#metriques)).
 
-L'aide annonce une « tolérance en colonnes (±) pour `numeric_recovery` et
-`total_extraction` ». En réalité, `cell_delta` n'est passé qu'à `_cell_recovered`, utilisé
-seulement pour `total_extraction` ; la boucle de `numeric_recovery` compare sans tolérance.
-Soit l'aide est fausse, soit l'implémentation l'est.
-
-### `marker_last_work` : régression ou appariement cassé ?
+### `marker_last_work` : régression ou appariement cassé ? {#marker-last-work}
 
 Configuration la plus récente et la moins bonne sur toutes les métriques
-(`total_extraction` à 0,043 contre 0,371 pour marker). Deux différences à lever avant toute
+(`total_extraction` à 0,042 contre 0,389 pour marker). Deux différences à lever avant toute
 conclusion sur le moteur :
 
 - ses CSV vivent hors de `reprise/`, dans `LLM_eval/output_csv/marker_last_work/` ;
@@ -945,7 +933,7 @@ tranché : il demande une vérification de l'appariement avant tout diagnostic.
 - **Décalage global.** Balayage exhaustif de Δligne ∈ [−6, +6] et Δcolonne ∈ [−4, +4],
   maximisant les correspondances exactes ; à égalité, le plus petit décalage est retenu.
 - **Gains annoncés.** Chaque levier de la page [Améliorations](ameliorations.qmd) a été
-  rejoué isolément sur le corpus courant. Ils ne s'additionnent pas : les leviers 01 et 03
+  rejoué isolément sur le corpus courant. Ils ne s'additionnent pas : les leviers 01 et 02
   corrigent en partie les mêmes cellules.
 
 ```{=html}

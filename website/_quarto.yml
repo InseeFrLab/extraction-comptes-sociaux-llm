@@ -1,38 +1,60 @@
 project:
   type: website
   output-dir: _site
-  # Le JSON de comparaison est produit par build_data.py et n'est pas versionné :
-  # il doit être copié tel quel dans le site rendu.
+  # Les JSON de comparaison sont produits par build_data*.py et ne sont pas versionnés :
+  # ils doivent être copiés tels quels dans le site rendu. Le comparateur les lit à la
+  # volée, et il est partagé par les deux pages « Comparaison ».
   resources:
     - data/comparaisons.json
+    - data/comparaisons-historiques.json
+    # Aperçus des documents sources, rapatriés de S3 par build_data*.py. Le comparateur
+    # ne les charge qu'à l'ouverture du volet : ils pèsent une trentaine de mégaoctets.
+    - data/apercus
+    - comparateur.js
 
 website:
-  title: "Diagnostic d'extraction"
+  title: "Extraction des comptes sociaux"
   description: >
-    Où se perdent les valeurs des tableaux de comptes sociaux entre le PDF scanné
-    et le CSV final, et quels correctifs sont les plus rentables.
+    Extraire les tableaux de filiales et participations de comptes sociaux scannés :
+    architecture des moteurs, mise en forme, évaluation, et où se perdent les valeurs.
   favicon: favicon.svg
   navbar:
     logo: favicon.svg
     left:
       - href: index.qmd
-        text: Synthèse
+        text: Introduction
+      - href: architecture.qmd
+        text: Architecture
       - href: conversion.qmd
-        text: Du JSON au CSV
-      - href: chiffres.qmd
-        text: Chiffres et cas
+        text: JSON → CSV
+      - href: mise-en-forme.qmd
+        text: Mise en forme
+      - href: evaluation.qmd
+        text: Évaluation
+      # Deux corpus, mêmes pages : le menu évite de doubler la barre de navigation.
+      - text: Résultats
+        menu:
+          - href: resultats.qmd
+            text: Comptes sociaux
+          - href: resultats-historiques.qmd
+            text: Tableaux historiques
       - href: ameliorations.qmd
         text: Améliorations
-      - href: comparaison.qmd
-        text: Comparaison des tableaux
+      - text: Comparaison
+        menu:
+          - href: comparaison.qmd
+            text: Comptes sociaux
+          - href: comparaison-historiques.qmd
+            text: Tableaux historiques
     right:
       - icon: github
         href: https://github.com/InseeFrLab/extraction-comptes-sociaux-llm
         aria-label: Dépôt GitHub
   page-footer:
     center: >
-      Corpus `s3://projet-extraction-tableaux/reprise/` — 48 PDF, 74 tableaux annotés.
-      Comptes sociaux déposés, publiés en open data par l'INPI.
+      Corpus `reprise/` — 48 PDF, 77 tableaux annotés, comptes sociaux déposés publiés en
+      open data par l'INPI. Corpus `tableaux_historiques/` — 40 scans, 40 tableaux annotés,
+      tableaux statistiques historiques.
   search: false
 
 format:

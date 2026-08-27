@@ -1,0 +1,72 @@
+---
+title: "Comparaison — tableaux historiques"
+subtitle: "Grille annotée à la main face à la grille extraite, cellule par cellule"
+toc: false
+---
+
+Même comparateur que pour les [comptes sociaux](comparaison.qmd), appliqué au corpus des
+tableaux statistiques historiques. **La couleur porte sur la grille annotée**, qui est la
+référence : statut de chaque valeur dans la zone de données, vert ou rouge sur les en-têtes
+de lignes et de colonnes selon qu'ils ont été appariés. La grille extraite reste neutre.
+Survoler une cellule met en évidence la cellule — ou la ligne, ou la colonne — appariée dans
+la prédiction, ce qui rend le décalage directement lisible.
+
+::: {.callout-note appearance="simple"}
+## Origine des grilles
+
+Les grilles annotées sont les fichiers HTML de `annotations/tableaux historiques/`, saisis à
+la main : leurs `rowspan` et `colspan` sont développés par le parseur de
+[la conversion](conversion.qmd), avec la convention des fusions Excel — la valeur à la
+première cellule, les cellules de continuation vides.
+
+Les grilles extraites sont les CSV de `tableaux_historiques/output_csv/`, produits par la
+même chaîne que les comptes sociaux : la seule différence tient à l'entrée, une image
+scannée au lieu d'un PDF (voir la page [Résultats](resultats-historiques.qmd)).
+
+**Le moteur est `chandra`**, notre appel direct au modèle `chandra-ocr-2` : l'image seule,
+sans aucune consigne, réduite à 2 200 pixels de grand côté. marker n'a pas été joué sur ce
+corpus, faute de GPU.
+
+Le statut de chaque cellule est celui de l'[échelle de classement](evaluation.qmd#classement)
+de la page Évaluation : chaque cellule tombe dans la première catégorie qui s'applique, de
+la structure vers la lecture.
+:::
+
+{{< include _comparateur.qmd >}}
+
+::: {.callout-note appearance="simple" collapse="true"}
+## Comment lire ces grilles
+
+- **Les en-têtes de lignes et de colonnes de la grille annotée sont verts ou rouges** selon
+  que leur libellé a été apparié à celui de la prédiction. Rouge = les valeurs de cette
+  ligne ou de cette colonne ne peuvent pas être comparées, quoi qu'ait lu le moteur. Le
+  coin haut-gauche, qui relève des deux axes, reste neutre.
+- **Les numéros de lignes et colonnes** reprennent la même couleur, pour rester lisibles
+  quand la grille défile ; ils sont ceux de la grille brute, à partir de zéro.
+- **Survoler un en-tête** met en évidence la ligne ou la colonne appariée dans la grille
+  extraite.
+- **La zone d'en-tête grisée** est celle détectée par `detect_column_header_height` et
+  `detect_row_header_width`, pas celle de la maquette d'origine. Deux zones grisées de
+  hauteurs différentes = tout le reste du tableau est décalé — la cause d'échec principale
+  du pipeline.
+- **Seules les cellules de la zone de données de l'annotation portent un statut.** En-têtes
+  et cellules non numériques ne sont pas évalués et restent neutres.
+- **« Valeur extraite mais ailleurs »** = la valeur attendue existe dans le CSV, mais pas à
+  la position appariée. La lecture est bonne, le placement non.
+- **Chaque tableau est désigné par l'année du document**, éventuellement suffixée quand
+  plusieurs tableaux en proviennent (`1967`, `1967_bis`, `1967_ter`) : c'est la clé qui
+  relie l'image `crop_{clé}` à son annotation `ground_truth_{clé}`.
+- **Le sélecteur « Moteur » ne propose que `chandra`**, notre appel direct : c'est le seul
+  moteur joué sur ce corpus.
+- **Le volet « Document d'origine »**, sous les grilles, montre le scan dont elles sont
+  tirées, réduit à la résolution que le moteur a lue. Il est replié par défaut : l'image
+  n'est téléchargée qu'à l'ouverture.
+:::
+
+```{=html}
+<script>
+  window.DX_SOURCE = "data/comparaisons-historiques.json";
+  window.DX_REBUILD = "uv run --project website python website/build_data_historiques.py";
+</script>
+<script src="comparateur.js"></script>
+```

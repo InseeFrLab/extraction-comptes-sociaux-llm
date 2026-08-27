@@ -1,0 +1,448 @@
+---
+title: "Résultats — tableaux historiques"
+subtitle: "Ce que le pipeline donne sur des tableaux statistiques scannés, annotés en HTML"
+---
+
+Cette page mesure le second corpus du projet. La méthode est celle décrite sur la page
+[Évaluation](evaluation.qmd) — mêmes fonctions, mêmes métriques, mêmes seuils : seuls le
+corpus et son format d'entrée changent. Pour le corpus des comptes sociaux, voir
+[Résultats](resultats.qmd).
+
+## Périmètre mesuré
+
+| Élément | Compte |
+|---|---:|
+| Tableaux statistiques historiques scannés (`pdf/tableaux historiques/`) | 40 |
+| Tableaux annotés à la main (`annotations/tableaux historiques/*.html`) | 40 |
+| Images extraites par chandra, sans erreur d'API | 40 |
+| Images produisant au moins un CSV | 38 |
+| Paires évaluées — `chandra` | **38** |
+| Cellules numériques non vides attendues, dans le périmètre évalué | 9 907 |
+
+Le corpus va de 1876 à 2011. Les tableaux comptent de 7 à 83 lignes et de 4 à 37 colonnes ;
+la moitié d'entre eux dépassent 42 lignes et 10 colonnes. Ce sont des documents
+dactylographiés ou composés au plomb, souvent denses, et sans la régularité du tableau
+réglementaire des comptes sociaux.
+
+::: {.callout-note appearance="simple"}
+## Trois écarts de méthode avec le corpus des comptes sociaux
+
+**L'entrée est une image, pas un PDF.** Chaque fichier porte un tableau déjà rogné, en TIFF
+ou PNG, de 37 à 889 mégapixels. `api_chandra` accepte ces images directement, au champ
+`image` de `/extract` : aucun aller-retour par le PDF. **Une image n'a pas de dpi** — un
+rognage n'a pas de taille physique, et les tags des fichiers sont des remplissages (`(1, 1)`
+en TIFF, `96 dpi` en PNG quand il y en a un). Ce qui décide de ce que le modèle voit est
+donc le nombre de pixels envoyés, réglé par `--cote-max` et mesuré
+[plus bas](#effet-resolution).
+
+**La référence est du HTML**, saisi à la main, et non un XLSX. Elle est lue par le parseur
+de [la conversion](conversion.qmd) : `rowspan` et `colspan` y sont développés avec la
+convention des fusions Excel — la valeur à la première cellule, les continuations vides.
+Dix des quarante annotations portent une balise en trop ou en moins, et demandent au
+parseur de se rattraper comme le ferait un navigateur ([détail](#annotations-malformees)).
+
+**Un seul moteur.** `chandra` est notre appel direct au VLM — l'image seule, sans aucune
+consigne, réduite à 2 200 pixels de grand côté ([mesure](#effet-resolution)). marker demande
+un GPU pour ses modèles Surya et n'a pas été joué ici : ce corpus ne compare donc pas deux
+moteurs entre eux, il mesure celui-là face à l'annotation.
+:::
+
+::: {.callout-important appearance="simple"}
+## Le résultat en une ligne
+
+**92,6 % des valeurs attendues sont lues quelque part dans l'image, 32,8 % arrivent dans la
+bonne cellule.** Le moteur lit ces scans anciens presque aussi bien que les comptes sociaux ;
+c'est la reconstruction de la grille qui décroche, et elle décroche beaucoup plus fort.
+:::
+
+## Ce qui est lu, et ce qui arrive au bon endroit {#entonnoir}
+
+```{=html}
+<div class="dx-tiles">
+  <div class="dx-tile">
+    <span class="dx-tile-val">92,6&nbsp;%</span>
+    <span class="dx-tile-lab">des 9&nbsp;907 valeurs attendues existent quelque part dans
+      les CSV produits pour leur image — 9&nbsp;172</span>
+  </div>
+  <div class="dx-tile">
+    <span class="dx-tile-val">32,8&nbsp;%</span>
+    <span class="dx-tile-lab">arrivent à la cellule attendue — 3&nbsp;245</span>
+  </div>
+  <div class="dx-tile">
+    <span class="dx-tile-val">1,0&nbsp;%</span>
+    <span class="dx-tile-lab">portent une erreur de lecture de chiffres — 95, soit le même
+      ordre de grandeur que sur les comptes sociaux (0,9&nbsp;%)</span>
+  </div>
+</div>
+```
+
+L'écart entre les deux premiers chiffres — près de 60 points — est ce que coûte la
+structure. Le même entonnoir, calculé à l'identique sur l'autre corpus, situe ce coût :
+
+::: {.dx-scroll}
+
+| Corpus, moteur | Valeurs attendues | Lues quelque part | À la bonne cellule | Écart |
+|---|---:|---:|---:|---:|
+| **Historiques**, `chandra` | 9 907 | **92,6 %** | **32,8 %** | **59,8 pts** |
+| Comptes sociaux, chandra | 5 543 | 98,1 % | 83,0 % | 15,1 pts |
+| Comptes sociaux, marker | 5 518 | 92,3 % | 55,7 % | 36,6 pts |
+
+: « Lues quelque part » = la valeur attendue existe, après normalisation, dans l'un des CSV produits pour ce document.
+
+:::
+
+Sur les scans historiques, chandra lit un peu moins bien qu'il ne lit les comptes sociaux
+(92,6 % contre 98,1 %) mais **perd quatre fois plus à la mise en grille**. Son taux d'erreur
+de transcription, lui, reste du même ordre sur des tableaux de 1876 que sur des comptes
+sociaux contemporains : 1,0 % des cellules attendues contre 0,9 %.
+
+## Métriques publiées {#metriques-publiees}
+
+Moyennes par fichier, selon la sémantique du dépôt (`dropna().mean()`). La colonne « hors
+vides » exclut les cellules vides de l'annotation et pondère par cellule, non par fichier.
+
+::: {.dx-scroll}
+
+| Corpus, moteur | Paires | `col_recovery` | `row_recovery` | `numeric_recovery` | hors vides, /cellule | `total_extraction` |
+|---|---:|---:|---:|---:|---:|---:|
+| **Historiques** — `chandra` | 38 | 0,778 | **0,723** | **0,436** | 0,306 | **0,158** |
+| Comptes sociaux — chandra (rappel) | 76 | 0,980 | 0,958 | 0,910 | 0,820 | 0,539 |
+
+Le même modèle, sur le même pipeline, perd donc plus de la moitié de son
+`numeric_recovery` en passant des comptes sociaux à ces scans anciens. Le réglage qui
+commande ici n'est pas la consigne envoyée au modèle mais **la taille de l'image**
+([mesure](#effet-resolution)).
+
+:::
+
+Six tableaux sur trente-huit sont extraits parfaitement (`total_extraction`), contre
+41 sur 76 pour les comptes sociaux. La médiane de `numeric_recovery` vaut 0,365 : ici,
+contrairement à l'autre corpus, le tableau typique n'est pas presque parfait.
+
+### Distribution du score d'extraction correcte {#distribution-score}
+
+Même score que sur l'autre page : colonnes appariées, lignes appariées et cellules
+numériques récupérées, rapportés au total attendu, les trois termes pondérés par leur
+effectif réel.
+
+```{=html}
+<figure class="dx-fig">
+  <p class="dx-fig-title">Distribution des tableaux selon leur score d'extraction correcte</p>
+  <p class="dx-fig-sub">Nombre de tableaux par tranche de score. Le score agrège, sur un même tableau, les colonnes appariées, les lignes appariées et les cellules numériques récupérées, rapportés au total attendu.</p>
+  <div class="dx-legend">
+    <span><span class="dx-swatch" style="background:var(--dx-chandra)"></span>chandra — 38 tableaux</span>
+  </div>
+  <div class="dx-hist">
+    <div class="dx-hist-yaxis">
+      <div class="dx-hist-ytick" style="bottom:0.0%">0</div>
+      <div class="dx-hist-ytick" style="bottom:20.0%">2</div>
+      <div class="dx-hist-ytick" style="bottom:40.0%">4</div>
+      <div class="dx-hist-ytick" style="bottom:60.0%">6</div>
+      <div class="dx-hist-ytick" style="bottom:80.0%">8</div>
+      <div class="dx-hist-ytick" style="bottom:100.0%">10</div>
+    </div>
+    <div class="dx-hist-plot">
+      <div class="dx-hist-grid" style="bottom:20.0%"></div>
+      <div class="dx-hist-grid" style="bottom:40.0%"></div>
+      <div class="dx-hist-grid" style="bottom:60.0%"></div>
+      <div class="dx-hist-grid" style="bottom:80.0%"></div>
+      <div class="dx-hist-grid" style="bottom:100.0%"></div>
+      <div class="dx-hist-bins">
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:70.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 0–10 % de score : 7 tableaux" data-label="7"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:30.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 10–20 % de score : 3 tableaux"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:10.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 20–30 % de score : 1 tableau"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:60.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 30–40 % de score : 6 tableaux"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:50.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 40–50 % de score : 5 tableaux"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:10.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 50–60 % de score : 1 tableau"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:10.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 60–70 % de score : 1 tableau"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:40.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 70–80 % de score : 4 tableaux"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:10.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 80–90 % de score : 1 tableau"></div>
+        </div>
+        <div class="dx-hist-bin">
+          <div class="dx-hist-bar" style="height:90.0%;background:var(--dx-chandra)" tabindex="0" data-tip="chandra — 90–100 % de score : 9 tableaux" data-label="9"></div>
+        </div>
+      </div>
+    </div>
+    <div class="dx-hist-xaxis">
+      <div class="dx-hist-xtick">0–10</div>
+      <div class="dx-hist-xtick">10–20</div>
+      <div class="dx-hist-xtick">20–30</div>
+      <div class="dx-hist-xtick">30–40</div>
+      <div class="dx-hist-xtick">40–50</div>
+      <div class="dx-hist-xtick">50–60</div>
+      <div class="dx-hist-xtick">60–70</div>
+      <div class="dx-hist-xtick">70–80</div>
+      <div class="dx-hist-xtick">80–90</div>
+      <div class="dx-hist-xtick">90–100</div>
+    </div>
+    <div class="dx-hist-axis-title">score d'extraction correcte, en&nbsp;%</div>
+  </div>
+  <figcaption class="dx-fig-note">Moyenne 0.509, médiane 0.455. Effectifs complets dans la table ci-dessous et au survol de chaque barre.</figcaption>
+</figure>
+```
+
+::: {.dx-scroll}
+
+| Tranche de score | chandra |
+|---|---:|
+| 0–10 % | 7 |
+| 10–20 % | 3 |
+| 20–30 % | 1 |
+| 30–40 % | 6 |
+| 40–50 % | 5 |
+| 50–60 % | 1 |
+| 60–70 % | 1 |
+| 70–80 % | 4 |
+| 80–90 % | 1 |
+| 90–100 % | 9 |
+| **Total** | **38** |
+
+: Effectifs par tranche. Un tableau dont toutes les lignes, toutes les colonnes et toutes les valeurs numériques sont correctes obtient 100 %.
+
+:::
+
+::: {.dx-scroll}
+
+| | tableaux historiques | comptes sociaux (chandra) |
+|---|---:|---:|
+| Score exactement 100 % | 6 | 41 |
+| Score sous 5 % | 2 | 0 |
+| Tranches extrêmes (< 20 % ou ≥ 80 %) | 20 (53 %) | 68 (89 %) |
+| Milieu (20–80 %) | 18 (47 %) | 8 (11 %) |
+| Moyenne du score | 0,509 | 0,931 |
+| Médiane du score | 0,455 | 1,000 |
+
+:::
+
+**La distribution n'est plus en U.** Sur les comptes sociaux, un tableau était presque
+toujours soit parfait soit nul, et le milieu était vide. Ici près d'un tableau sur deux
+tombe entre 20 et 80 % : la grille n'est pas ratée d'un bloc, elle est *partiellement*
+reconstruite. C'est cohérent avec l'entonnoir — les valeurs sont lues, et une partie
+seulement atterrit au bon endroit.
+
+## Décomposition des cellules attendues {#decomposition-cellules}
+
+Cellules numériques **non vides** de la zone de données, tous fichiers évalués confondus :
+9 907. Chaque cellule est classée dans la première catégorie qui s'applique, de la structure
+vers la lecture.
+
+::: {.dx-scroll}
+
+| Devenir de la cellule | chandra | % | Nature |
+|---|---:|---:|---|
+| **Récupérée** | **3 245** | **32,8** | — |
+| Ligne *et* colonne non appariées | 977 | 9,9 | Structure |
+| Colonne non appariée | 1 319 | 13,3 | Structure |
+| Ligne non appariée | 2 594 | 26,2 | Structure |
+| Bonne ligne, colonne décalée | 650 | 6,6 | Structure |
+| Cellule vide, valeur présente ailleurs | 200 | 2,0 | Structure |
+| Autre décalage | 641 | 6,5 | Structure |
+| Cellule vide, valeur nulle part | 71 | 0,7 | Lecture |
+| Format seul | 11 | 0,1 | Normalisation |
+| Erreur de lecture de chiffres | 95 | 1,0 | Lecture |
+| Texte à la place du nombre | 5 | 0,1 | Lecture |
+| Valeur franchement différente | 99 | 1,0 | Lecture |
+| **Total** | **9 907** | **100** | |
+
+:::
+
+- **Structure contre lecture : vingt-quatre contre un.** Les postes « Structure » pèsent
+  64,4 %, les postes « Lecture » 2,7 %. Sur les comptes sociaux, le rapport était de six
+  contre un chez marker et de treize contre un chez chandra. Sur ce corpus, corriger
+  l'alignement est la seule chose qui compte.
+- **Ce qui décroche, ce sont les lignes.** 26,2 % des cellules ont leur ligne non appariée,
+  et 9,9 % ni ligne ni colonne — contre 1,1 % et 0,0 % chez chandra sur les comptes
+  sociaux. Les libellés de lignes de ces tableaux sont longs, hiérarchisés sur deux ou trois
+  niveaux de fusions, et souvent abrégés par le typographe d'origine.
+- **Le poste « Cellule vide, valeur nulle part » est marginal** (0,7 %) : le moteur
+  n'oublie presque rien, il le range ailleurs.
+
+### Nature des erreurs de lecture
+
+Les 95 erreurs de transcription se répartissent en 54 substitutions d'un chiffre, 39 écarts
+d'un ou deux chiffres et 2 permutations. Aucune troncature en fin de cellule. Sur 140 des
+3 245 cellules récupérées (4,3 %), l'écriture diffère sans que les chiffres changent :
+115 fois le seul séparateur de milliers, 22 fois une autre convention, 3 fois la virgule
+contre le point décimal — écarts absorbés par la normalisation.
+
+## Effet de la résolution envoyée au modèle {#effet-resolution}
+
+`api_chandra` accepte l'image telle quelle : il n'y a ni page, ni dpi, seulement un nombre
+de pixels. Reste à choisir lequel. Le corpus ne le dit pas — les fichiers vont de 37 à
+889 mégapixels et leur tag de résolution est un remplissage (`(1, 1)` en TIFF, `96 dpi` en
+PNG quand il existe) — et un rognage n'a pas de taille physique dont on déduirait un dpi.
+La valeur a donc été **mesurée**, sur huit tableaux couvrant tous les modes d'échec, à trois
+grands côtés :
+
+::: {.dx-scroll}
+
+| Tableau | 2 200 px | 3 300 px | 4 400 px | Ce que fait le moteur |
+|---|---:|---:|---:|---|
+| `1970` | **100,0 %** | **100,0 %** | 97,9 % | 1 tableau partout |
+| `1876` | **41,7 %** | 39,3 % | 8,3 % | 1 → 2 → **4** tableaux |
+| `1946` | 7,9 % | 6,7 % | **27,8 %** | 1 tableau partout |
+| `1989` | 0,0 % | 0,0 % | 0,0 % | 3 tableaux partout |
+| `1962` | 5,9 % | 5,9 % | 5,9 % | 5 → **1** → 5 tableaux |
+| `1885` | aucun `<table>` | 0,1 % | aucun `<table>` | 0 → 3 → 0 tableaux |
+| `1921` | aucun `<table>` | aucun `<table>` | aucun `<table>` | jamais de tableau |
+| `1963_bis` | 0,0 % | aucun `<table>` | 1,6 % | 1 → 0 → 1 tableau |
+
+: Taux de récupération des valeurs, mesuré avec la fonction du site (`compare_pair`). Balayage exploratoire, rien n'est écrit sur S3. Mesuré avant le correctif du parseur d'annotations : les niveaux ont bougé depuis, la comparaison entre colonnes reste valable.
+
+:::
+
+Trois conclusions, et elles vont toutes dans le même sens :
+
+- **Monter en résolution n'améliore pas.** 2 200 px est le meilleur ou à égalité sur cinq
+  tableaux sur huit. 4 400 px ne gagne que sur `1946` (+20 points) et `1963_bis`
+  (+1,6 point), et perd 33 points sur `1876`.
+- **La finesse aggrave la sur-segmentation.** `1876` passe de 1 à 4 tableaux entre 2 200 et
+  4 400 px, et son taux s'effondre d'autant. Plus l'image est grande, plus chandra y
+  distingue de blocs de mise en page — et c'est précisément ce découpage qui coûte le plus
+  cher sur ce corpus.
+- **Le découpage n'est même pas stable.** `1962` rend 5 tableaux à 2 200 px, 1 à 3 300 px,
+  5 à nouveau à 4 400 px, pour un taux identique. La segmentation n'est donc pas une
+  fonction monotone de la résolution.
+- **Le renoncement sur les tableaux larges n'est pas un problème de finesse.** `1921` ne
+  produit aucun `<table>` aux trois résolutions.
+
+Le corpus est donc extrait à **2 200 px de grand côté**, et `--cote-max` reste offert pour
+rejouer une autre valeur. Cela recoupe le constat déjà fait sur les comptes sociaux, où un
+rendu adaptatif du dpi page par page avait été mesuré puis retiré — 2 paires améliorées,
+4 dégradées, 22 inchangées, solde de −149 cellules. **Il n'y a pas de relation monotone
+entre résolution et qualité**, et le bon réglage dépend du document : les deux corpus sont
+donc extraits à résolution fixe, 200 dpi pour les PDF et 2 200 px de grand côté pour les
+images — soit à peu près ce que donne une A4 lue à 200 dpi.
+
+## Les deux causes d'échec propres à ce corpus {#causes}
+
+### 1. Le moteur découpe une image en plusieurs tableaux {#sur-decoupage}
+
+Chaque image porte **un** tableau, déjà rogné : la référence en compte donc toujours un.
+Chandra en a rendu plusieurs sur 12 images sur 38, jusqu'à six pour `1963`. La comparaison
+ne confronte alors l'annotation qu'au premier bloc, et tout ce qui a été lu dans les
+suivants sort du compte.
+
+::: {.dx-scroll}
+
+| | images | score moyen | score médian |
+|---|---:|---:|---:|
+| Un seul tableau rendu | 26 | **0,617** | 0,692 |
+| Plusieurs tableaux rendus | 12 | **0,274** | 0,317 |
+
+:::
+
+Le découpage divise le score par plus de deux. Le recollage de blocs de
+[`json_to_csv.py`](conversion.qmd) ne s'y applique pas : il ne recolle deux blocs que s'ils
+ont la même largeur et que le second est une continuation reconnaissable, or ces blocs-là
+diffèrent en largeur (`1885_ter` : 44 × 19 face à une annotation 42 × 27). Ce sont des blocs
+de mise en page — un intertitre de section traverse le tableau et chandra rouvre une région
+— et non des suites de page. **C'est le premier levier à travailler sur ce corpus.**
+
+### 2. Le modèle renonce sur les tableaux très larges {#tableaux-larges}
+
+Deux images ne produisent **aucun** `<table>` : `1885` et `1921`. Le modèle y répond par une
+description en prose, en anglais, au lieu de transcrire :
+
+> `<p>Table with 28 columns: Département, Age (HOMMES, FEMMES), Instruction (HOMMES, FEMMES), Consanguinities, Legitimizations, and Order Number. Rows list various French departments from AIN to LOZÈRE.</p>`
+
+Ce sont **exactement les deux tableaux les plus larges du corpus** : 37 et 35 colonnes
+annotées, quand la médiane est à 10. Ces deux-là quittent l'évaluation faute de CSV, et ne
+sont donc pas comptés dans les 38 paires — leur perte est totale et n'apparaît dans aucune
+des moyennes ci-dessus.
+
+La largeur pèse aussi sur les tableaux qui, eux, sortent bien :
+
+::: {.dx-scroll}
+
+| Largeur de l'annotation | tableaux | score moyen |
+|---|---:|---:|
+| Moins de 15 colonnes | 25 | **0,576** |
+| 15 colonnes et plus | 13 | **0,379** |
+
+:::
+
+### Un cas à part : la réponse coupée {#reponse-coupee}
+
+`1902` illustre une troisième défaillance, isolée : après 24 lignes correctes le modèle
+s'est mis à produire des lignes vides jusqu'à épuiser sa limite de jetons — 1 650 `<tr>`
+vides, une grille prédite de 1 674 lignes pour une annotation de 57, et pas de `</table>`
+final. Le parseur referme désormais un `<table>` laissé ouvert en fin de flux, comme le
+ferait un navigateur, ce qui fait figurer ce tableau dans la mesure pour ce qu'il vaut
+(1,4 % des valeurs récupérées) au lieu de l'en faire disparaître en silence.
+
+## Les annotations malformées {#annotations-malformees}
+
+**Dix des quarante annotations HTML portent une balise en trop ou en moins** : `<tr>` ouvert
+deux fois d'affilée, `<td>` non refermé, `</td>` orphelin, `</table>` absent. Saisies à la
+main, elles n'ont jamais été passées par un validateur.
+
+Ce n'est pas anodin : un `<tr>` en double empêchait le décompte d'un `rowspan` en cours, qui
+fuyait alors vers la droite et inventait des colonnes. `1876` était lu **54 × 16** avec huit
+colonnes entièrement vides, pour un tableau qui en compte huit ; `1963_bis` était lu
+83 × 35 au lieu de 83 × 18. La référence étant faussée, toute la mesure l'était avec elle.
+
+Le parseur applique désormais les règles de fermeture implicite de HTML5, celles qu'un
+navigateur applique : un `<tr>` referme la ligne ouverte, un `<td>` referme la cellule
+ouverte, une cellule hors ligne en ouvre une, une balise fermante orpheline est ignorée. Une
+seule dérogation, documentée dans le code : une ligne implicite **sans aucun contenu** est
+abandonnée sans décompter les fusions en cours, parce qu'elle vient d'une balise en double
+et non d'une ligne du tableau.
+
+Vérifié sur les 96 JSON du corpus des comptes sociaux : la sortie de la conversion est
+**identique au bit près**. Ces règles ne se déclenchent que sur du HTML malformé.
+
+Il reste trois annotations portant une colonne entièrement vide — `1885`, `1963` et
+`1970_bis`. Celles-là ne relèvent pas du parsing : `1970_bis` déclare 13 colonnes dans sa
+ligne d'en-tête (`3 + colspan 5 + colspan 5`) pour 12 en données. C'est la saisie qu'il
+faudrait reprendre.
+
+## Ce que ces chiffres ne disent pas {#reserves}
+
+- **Le classement des cellules emprunte la normalisation de `build_data.py`**, qui retire
+  les unités en suffixe là où l'évaluation ne le fait pas. D'où 32,8 % de cellules
+  récupérées dans la décomposition contre 30,6 % dans le tableau des métriques : la même
+  divergence pour tous les postes, sur les deux corpus.
+- **Les deux images sans `<table>` ne sont dans aucune moyenne.** Compter leurs 2 996
+  cellules attendues comme perdues ramènerait le taux de récupération de la décomposition
+  de 32,8 % à 25,2 %.
+- **La comparaison au seul premier bloc pénalise les images sur-découpées** au-delà de ce
+  que le moteur a réellement raté : l'entonnoir de la [première section](#entonnoir) est là
+  pour le mesurer, et c'est lui qui dit que 92,6 % des valeurs ont bien été lues.
+- **Un seul annotateur**, comme pour le corpus des comptes sociaux, et une référence dont un
+  quart des fichiers était syntaxiquement invalide : les écarts de saisie ne sont pas
+  mesurables ici, mais ils existent.
+
+## Reproduire ces chiffres
+
+```bash
+# 1. Extraction (api_chandra doit tourner ; aucune variable de résolution à poser)
+uv run --project scripts scripts/extraction_historiques.py --all
+
+# 2. Conversion en CSV
+uv run --project scripts scripts/json_to_csv.py --method chandra_historiques --overwrite
+
+# 3. Métriques
+uv run --project scripts scripts/evaluation_historiques.py
+
+# 4. Données du site, puis tous les chiffres de cette page
+uv run --project website python website/build_data_historiques.py
+uv run --project scripts scripts/chiffres_site_historiques.py
+```

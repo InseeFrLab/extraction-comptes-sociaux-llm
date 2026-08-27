@@ -1,10 +1,10 @@
 ---
 title: "Du JSON au CSV"
-subtitle: "Comment la sortie d'un moteur devient le tableau qui sera comparé"
+subtitle: "Comment passer d'une grille d'extraction à un CSV formatté ?"
 ---
 
-`scripts/json_to_csv.py` transforme la sortie brute de chaque moteur en un CSV par
-tableau. C'est ce CSV, et lui seul, que l'évaluation confronte au XLSX annoté à la main.
+`scripts/json_to_csv.py` transforme la sortie brute de chaque moteur en **un CSV par
+tableau**. C'est ce CSV, et lui seul, que l'évaluation confronte au XLSX annoté à la main.
 
 L'étape ne lit aucun pixel, mais elle est décisive : **tout ce que le moteur savait de la
 mise en page doit y devenir une grille de lignes et de colonnes, ou être perdu.**
@@ -13,126 +13,158 @@ mise en page doit y devenir une grille de lignes et de colonnes, ou être perdu.
 
 - **Elle décide de la découpe** en lignes et en colonnes — et rien d'autre.
 - **Elle ne détecte aucun en-tête, ne normalise aucun nombre, ne nettoie aucun libellé**
-  au-delà des espaces. Ces traitements sont en aval, dans `evaluation_extraction.py`.
+  au-delà des espaces. Ces traitements sont en aval, dans l'[évaluation](evaluation.qmd).
 - **Conséquence :** une valeur mal *placée* ici est définitivement perdue ; une valeur mal
   *formatée* sera rattrapée plus loin.
 
-Chaque moteur a son format de sortie, donc son propre chemin de code.
-
-::: {.dx-scroll}
-
-| | marker | chandra |
-|---|---|---|
-| Entrée S3 | `reprise/output_marker/*.json` | `reprise/output_chandra/*.json` |
-| Structure du fichier | arbre de blocs (`Document` → `Page` → …) | plat : `pages[]` |
-| Contenu d'un tableau | HTML `<table>` | HTML `<table>` ; matrice de chaînes déjà découpée dans le format aplati archivé (`output_chandra_v1`) |
-| Information de fusion | `colspan`, `rowspan` — 219 et 354 balises, 41 et 37 documents sur 48 | `colspan`, `rowspan` — 156 et 297 balises, 40 et 33 documents ; **aucune** dans le format aplati archivé |
-| Travail de la conversion | analyser le HTML, développer les fusions | idem ; replacer les sous-lignes d'en-tête si le format aplati est relu |
-| Travail commun aux deux | rectangulariser la grille | idem |
-| Tableaux produits (48 PDF) | 78 | 88 |
-
-:::
-
-## marker — du HTML imbriqué à la grille
-
-Le JSON de marker est un arbre de blocs typés, chacun portant un `block_type`, un fragment
-`html` et ses `children` :
-
-``` json
-{
-  "block_type": "Document",
-  "children": [
-    { "block_type": "Page",
-      "children": [
-        { "block_type": "TableGroup",
-          "html": "<content-ref src='/page/0/Table/12'></content-ref>",
-          "children": [
-            { "block_type": "Table",
-              "html": "<table><tbody><tr><th rowspan='2'>SOCIETES</th>…</tr></tbody></table>",
-              "children": [ { "block_type": "TableCell", "…": "…" } ] }
-          ] }
-      ] }
-  ] }
+```{=html}
+<div class="dx-flow">
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">1. Collecter les tableaux du document</span>
+    <span class="dx-flow-desc">Un extracteur par moteur — c'est le seul endroit où les deux
+      chemins diffèrent.</span>
+  </div>
+  <div class="dx-flow-arrow">fragments HTML</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">2. Parser le HTML en matrice</span>
+    <span class="dx-flow-desc">Fusions développées en positions de grille, <code>&lt;br&gt;</code> marqué.</span>
+  </div>
+  <div class="dx-flow-arrow">matrice de chaînes, marques de retour conservées</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">3. Découper les enregistrements empilés</span>
+    <span class="dx-flow-desc">Chaque <code>&lt;br&gt;</code> rendu à une espace, ou à une coupure de ligne.</span>
+  </div>
+  <div class="dx-flow-arrow">matrice sans marque</div>
+  <div class="dx-flow-step dx-flow-aside">
+    <span class="dx-flow-name">4. Recoller les blocs d'une même page</span>
+    <span class="dx-flow-desc">chandra seulement : sa segmentation coupe un tableau dès
+      qu'un intertitre s'intercale.</span>
+  </div>
+  <div class="dx-flow-arrow">une matrice par tableau réel</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">5. Normaliser la grille</span>
+    <span class="dx-flow-desc">Largeur canonique, sous-lignes d'en-tête replacées,
+      lignes-labels ramenées, complétion à droite.</span>
+  </div>
+  <div class="dx-flow-arrow">grille rectangulaire</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">6. Écrire un CSV par tableau</span>
+    <span class="dx-flow-desc"><code>{siren}_{n}.csv</code>, séparateur <code>;</code>, encodage <code>utf-8-sig</code>.</span>
+  </div>
+</div>
 ```
 
-### La collecte des blocs
+## Les six étapes de la mise en forme JOSN vers CSV
 
-- `MarkerTableExtractor` parcourt l'arbre et retient les blocs `Table` **et** `TableGroup`
-  (82 et 18 sur le corpus).
-- Retenir les deux pourrait produire des doublons. La collecte s'en garantit elle-même :
-  **un `TableGroup` dont la descendance porte des `Table` est écarté au profit de
-  ceux-ci.** La déduplication ne dépend donc plus de la forme de la sortie du moteur.
-- Quatre blocs `Table` ne produisent rien (`html` vaut `<p></p>`). Le compte tombe juste :
-  78 tableaux, 78 CSV.
+:::: {.dx-finding}
+[1]{.dx-rank} [`MarkerTableExtractor` · `ChandraTableExtractor`]{.dx-fn}
 
-### Le parseur HTML
+### Collecter les tableaux du document
 
-`_TableHTMLParser` convertit le `<table>` en matrice, selon quatre règles :
+Chaque moteur a son format de sortie, donc son propre chemin de code — et c'est le **seul**
+endroit où ils diffèrent.
 
-- **`colspan`** est développé en cellules à droite ; seule la première porte la valeur.
-- **`rowspan`** est reporté sur les lignes suivantes via un compteur par colonne, la
-  valeur restant à sa position d'origine. Répéter la valeur rendrait les lignes
-  indiscernables à l'appariement et diviserait la récupération numérique par près de deux.
-- **`<br>` et retours à la ligne** deviennent des espaces : un en-tête sur deux lignes
-  devient une seule chaîne.
-- **Les positions d'un `rowspan` ouvert** sont pourvues avant la première cellule écrite
+**marker** parcourt l'arbre de blocs et retient les blocs `Table` **et** `TableGroup` (82 et
+18 sur le corpus). Retenir les deux pourrait produire des doublons ; la collecte s'en garde
+elle-même : **un `TableGroup` dont la descendance porte des `Table` est écarté au profit de
+ceux-ci.** La déduplication ne dépend donc pas de la forme de la sortie du moteur. Quatre
+blocs `Table` ne produisent rien (leur `html` vaut `<p></p>`) — le compte tombe juste : 78
+tableaux, 78 CSV.
+
+**chandra** parcourt les pages dans l'ordre et concatène leurs tableaux. Les pages portant
+du HTML passent par le parseur de marker, donc par le même traitement déterministe des
+fusions. Un tableau sans aucune ligne de données est rejeté (aucun cas sur le corpus).
+
+::: {.callout-note collapse="true"}
+## Le format historique de chandra, toujours lu
+
+Avant la reprise de l'API, la sortie était aplatie en listes de listes de chaînes
+(`pages[].tables`), sans aucune fusion. La conversion lit encore ce format — les JSON
+archivés dans `reprise/output_chandra_v1/` en relèvent — et n'y peut que replacer les
+sous-lignes d'en-tête au mieux (étape 5). Le corpus courant, lui, est au format HTML :
+55 pages, 88 grilles brutes, fusions déclarées.
+:::
+::::
+
+:::: {.dx-finding}
+[2]{.dx-rank} [`_TableHTMLParser`]{.dx-fn}
+
+### Parser le HTML en matrice
+
+Un seul parseur pour les deux moteurs, quatre règles :
+
+- **`colspan`** est développé en cellules à droite ; **seule la première porte la valeur**.
+- **`rowspan`** est reporté sur les lignes suivantes via un compteur par colonne, la valeur
+  restant à sa position d'origine.
+- **`<br>` et retours à la ligne** sont remplacés par une marque interne, réglée à l'étape
+  suivante.
+- **Les positions d'un `rowspan` ouvert** sont pourvues *avant* la première cellule écrite
   de la ligne, et la ligne est complétée jusqu'à la dernière position reportée — sans quoi
   le décalage se propagerait à tout le tableau.
 
 Grâce à cette dernière règle, **plus aucune des 78 grilles marker ne ressort à lignes
-inégales** (18 auparavant). Marker déclarant ses fusions en `colspan`, ses lignes
-d'en-tête sont déjà à la bonne largeur : seule joue ensuite la règle des lignes-labels.
+inégales** (18 auparavant).
 
-## chandra — du HTML, comme marker
+::: {.dx-evidence}
+**Pourquoi la valeur reste à l'origine.** C'est la convention des annotations de référence,
+où une fusion Excel n'écrit la valeur que dans sa première cellule. Mesuré sur 69 paires :
+le report des positions porte la récupération numérique de 42,0 % (sans report) à 48,4 % ;
+**répéter la valeur sur les lignes couvertes la fait tomber à 29,7 %** — un libellé
+dupliqué rend les lignes indiscernables à l'appariement des en-têtes.
+:::
+::::
 
-Chandra renvoie le HTML du modèle, une entrée par page. Le format historique, aplati en
-listes de listes de chaînes, reste lu par la conversion :
+:::: {.dx-finding}
+[3]{.dx-rank} [`_split_stacked_rows`]{.dx-fn}
 
-``` json
-{
-  "pages": [
-    { "page": 1,
-      "tables": [
-        [ ["SOCIETES", "Capital", "Capitaux propres"],
-          ["Filiale A", "877 668", "1 070 093"] ]
-      ] }
-  ] }
+### Découper les enregistrements empilés
+
+Un `<br>` peut signifier deux choses. Le plus souvent, un libellé simplement replié en fin
+de ligne : il devient une **espace**, sans quoi les mots se soudent (« Prêts
+etavancesconsentispar laSociété »). Mais certains tableaux composent **un enregistrement
+sur deux lignes physiques sans filet entre elles**, l'en-tête l'annonçant sur deux
+niveaux :
+
+``` text
+Denomination  | Capital          | Q.P. Detenue   | Val. brute Titres
+Siège Social  | Capitaux Propres | Divid.encaiss. | Val. nette Titres
 ```
 
-- `ChandraTableExtractor` parcourt les pages dans l'ordre et concatène leurs tableaux ;
-  celles qui portent du HTML passent par le parseur de marker, donc par le même traitement
-  déterministe des fusions, puis par le recollage des blocs décrit
-  [plus bas](#les-blocs-dune-même-page-recollés).
-- 42 fichiers tiennent en une page, 5 en deux, 1 en trois. Un tableau coupé par un saut de
-  page reste mesuré page par page : c'est ainsi qu'il est annoté, un fichier par page.
-- **Le corpus `reprise/output_chandra/` est au format HTML** : 55 pages, 88 grilles — 79
-  après recollage — et les fusions y sont déclarées. Le format aplati — qui n'en portait aucune, là où marker dit
-  `rowspan="2"` — est archivé dans `reprise/output_chandra_v1/`.
+Les moteurs lisent la page telle qu'elle est composée et rendent **une seule `<tr>` par
+société**, chaque cellule portant ses deux valeurs séparées par un `<br>` :
 
-::: {.callout-important appearance="simple"}
-## L'information n'avait pas été perdue, elle était jetée
+``` html
+<td>MDHA<br/>6 West 18th Street, New York 10011</td>
+<td>14 498 145$<br/>12 789 320$</td>
+```
 
-Le modèle produit bien du HTML — avec `colspan`, `<thead>`/`<tbody>` et un `data-bbox` par
-bloc, vérifié en soumettant une page au serveur vllm. C'est l'API qui l'aplatissait avant
-écriture.
+Le `<br>` doit alors devenir une **coupure de ligne**. La signature reste étroite —
+plusieurs cellules coupées, toutes du même nombre de parties, dont au moins deux empilant
+deux nombres — et une cellule renseignée une seule fois va sur la première ligne produite,
+la seconde restant vide, comme le fait l'annotation.
 
-L'API renvoie désormais ce HTML tel quel (`pages[].html`), lu par le parseur de marker :
-mêmes fusions, mêmes règles. **Le corpus a été ré-extrait à ce format** ; l'ancien reste
-disponible dans `reprise/output_chandra_v1/`. La conversion lit les deux, et ce qui suit
-décrit ce qu'elle fait du format aplati — sans effet sur le corpus courant.
+::: {.dx-evidence}
+**Ampleur.** 9 lignes sur 1 209 chez chandra, 10 sur 1 234 chez marker. Sur
+`_0334_394331946_TAB`, où toute la page est composée ainsi, le fichier passe de 11 à 20
+lignes et sa récupération numérique de **0,044 à 1,000**. Aucun autre CSV du corpus ne
+change d'une seule ligne.
 :::
+::::
 
-### Les blocs d'une même page, recollés
+:::: {.dx-finding}
+[4]{.dx-rank} [`_merge_chandra_blocks` — chandra seulement]{.dx-fn}
+
+### Recoller les blocs d'une même page
 
 Chandra ne rend pas des tableaux, mais une **segmentation de mise en page** : un
 `<div data-label="Table">` par région visuelle contiguë, interrompue dès qu'un autre bloc
 s'intercale. Un tableau que traverse un intertitre de section ressort donc en plusieurs
-`<table>` — quatre pour `468_316701416_TAB`, sept sur une page de `411373525`. Le modèle
-n'annonce aucune continuation, mais son balisage dit lequel de ces blocs est un tableau
-entier. Sur les 88 grilles du corpus, 74 déclarent un `<thead>` et un `<tbody>` ; les 14
-autres tiennent à cinq fichiers, dont les trois que le recollage réunit.
+`<table>` — quatre pour `468_316701416_TAB`, sept sur une page de `411373525`.
 
-Trois signaux, lus dans la sortie du modèle et non déduits des nombres :
+Le modèle n'annonce aucune continuation, mais **son balisage dit lequel de ces blocs est un
+tableau entier**. Trois signaux, lus dans la sortie et non déduits des nombres :
+
+::: {.dx-scroll}
 
 | Signal | Lecture |
 |---|---|
@@ -140,42 +172,53 @@ Trois signaux, lus dans la sortie du modèle et non déduits des nombres :
 | aucune ligne de plusieurs `th` | bloc sans en-tête propre : suite du tableau en cours |
 | `th`/`td` unique en `colspan` pleine largeur | intertitre, pas un en-tête de colonnes |
 
-Un bloc qui réimprime un vrai en-tête reste un tableau distinct : dans une même page, un
-en-tête répété désigne deux tableaux de même forme (`_1465_652027384_TAB`, quatre tableaux
-rouvrant tous sur « (en milliers d'euros) | 31/12/2021 | 31/12/2020 »), pas une suite. Le
-recollage exige en outre une largeur de colonnes identique — un tableau coupé en largeur ne
-se recolle jamais par lignes — et ne franchit jamais une page.
+:::
 
-**Le texte des intertitres est rendu au tableau**, faute de quoi il est perdu : il est hors
-de toute balise `<table>`. Deux sorts selon la géométrie. Quand le bloc `Section-Header`
-chevauche le bord supérieur du tableau — il commence au-dessus et finit dedans — c'est un
-libellé de ligne que le modèle a sorti de sa cellule : sur `411373525`, chaque raison
-sociale part ainsi, ne laissant que l'adresse dans la ligne, et aucun des dix CSV du SIREN
-ne contenait le mot « Vallourec ». Le texte est alors recollé en tête de cellule, comme
-l'annotation le fait. Sinon il devient une ligne-label, mais seulement devant un bloc sans
-en-tête de colonnes propre : devant un bloc qui a le sien, c'est le titre du tableau, et
-l'annotation ne le porte pas davantage.
+Un bloc qui **réimprime un vrai en-tête reste un tableau distinct** : dans une même page,
+un en-tête répété désigne deux tableaux de même forme, pas une suite. Le recollage exige en
+outre une largeur de colonnes identique — un tableau coupé en largeur ne se recolle jamais
+par lignes — et **ne franchit jamais une page**.
 
-Effet sur le corpus : 88 grilles ramenées à 79, trois fichiers touchés, aucun autre modifié
-d'une seule ligne. `468_316701416_TAB` passe de 4 CSV à 1 et `411373525` de 10 à 5, tous
-deux au compte exact de leur annotation.
+::: {.callout-note collapse="true"}
+## Le texte des intertitres est rendu au tableau
 
-### La normalisation des lignes
+Faute de quoi il est perdu : il est hors de toute balise `<table>`. Deux sorts selon la
+géométrie. Quand le bloc `Section-Header` **chevauche le bord supérieur du tableau** — il
+commence au-dessus et finit dedans — c'est un libellé de ligne que le modèle a sorti de sa
+cellule : sur `411373525`, chaque raison sociale part ainsi, ne laissant que l'adresse dans
+la ligne, et aucun des dix CSV du SIREN ne contenait le mot « Vallourec ». Le texte est
+alors recollé en tête de cellule, comme l'annotation le fait. Sinon il devient une
+ligne-label, mais seulement devant un bloc sans en-tête de colonnes propre : devant un bloc
+qui a le sien, c'est le titre du tableau, et l'annotation ne le porte pas davantage.
+:::
 
-`_normalize_grid` uniformise les longueurs de ligne, en trois règles ordonnées :
+::: {.dx-evidence}
+**Effet sur le corpus.** 88 grilles ramenées à 79, **trois fichiers touchés, aucun autre
+modifié d'une seule ligne**. `468_316701416_TAB` passe de 4 CSV à 1 et `411373525` de 10 à
+5, tous deux au compte exact de leur annotation.
+:::
+::::
 
-1. **Largeur canonique** = maximum sur les lignes portant au moins deux cellules non
-   vides. Les lignes-labels (intertitres du type « A - FILIALES DÉTENUES À 50 % ») en sont
-   exclues, sinon un intertitre placé en fin de ligne imposerait ses colonnes vides à tout
-   le tableau.
+:::: {.dx-finding}
+[5]{.dx-rank} [`_normalize_grid`]{.dx-fn}
+
+### Normaliser la grille
+
+Quatre règles ordonnées, communes aux deux moteurs :
+
+1. **Largeur canonique** = maximum sur les lignes portant au moins deux cellules non vides.
+   Les lignes-labels (intertitres du type « A - FILIALES DÉTENUES À 50 % ») en sont exclues,
+   sinon un intertitre placé en fin de ligne imposerait ses colonnes vides à tout le
+   tableau.
 2. **Sous-ligne d'en-tête** replacée sous le libellé qu'elle détaille, quand la ligne
    parente permet de l'identifier.
-3. **Complétion à droite**, faute de mieux.
+3. **Ligne-label** ramenée en première colonne : elle occupe la ligne entière, sa colonne
+   d'origine ne porte aucune information.
+4. **Complétion à droite**, faute de mieux — c'est le seul endroit où l'on sait encore d'où
+   viennent les cellules manquantes.
 
-Un préalable propre à chandra : un tableau sans aucune ligne de données est rejeté (aucun
-cas sur le corpus).
-
-#### La règle 2 en détail
+::: {.callout-note collapse="true"}
+## La règle 2 en détail
 
 `['Brute', 'Nette']` qualifie deux colonnes au milieu du tableau ; complétée à droite,
 cette sous-ligne tomberait en colonnes 0-1 et fausserait tout l'en-tête. L'information est
@@ -185,89 +228,37 @@ dans cet ordre :
 
 - **Le vocabulaire réglementaire** — le seul en-tête à sous-colonnes est le bloc « valeurs
   comptables » / « valeur d'inventaire ». Un libellé parent qui en relève, **et seulement
-  s'il est unique** dans sa ligne, est le libellé couvrant. Jouait sur **25 des 88 grilles
-  du format aplati** ; sur le corpus HTML courant, la règle 2 ne se déclenche plus du tout.
-- **L'unicité du candidat** — si la ligne parente n'offre qu'un seul libellé susceptible
-  de couvrir des sous-colonnes (non vide, non numérique, hors première colonne), il n'y a
-  rien à trancher. La première colonne est exclue : elle porte les raisons sociales.
+  s'il est unique** dans sa ligne, est le libellé couvrant.
+- **L'unicité du candidat** — si la ligne parente n'offre qu'un seul libellé susceptible de
+  couvrir des sous-colonnes (non vide, non numérique, hors première colonne), il n'y a rien
+  à trancher. La première colonne est exclue : elle porte les raisons sociales.
 - **Le trou de continuation** — quand la ligne parente est déjà à la largeur du tableau et
   porte exactement `k - 1` cellules vides après un libellé, ce trou désigne le libellé
   couvrant. Deux trous candidats font renoncer.
 
-Si aucun ne tranche, la règle 3 reprend la main.
+Si aucun ne tranche, la règle 4 reprend la main.
 
-::: {.callout-note appearance="simple"}
-## Portée de la règle 2
-
-Le trou de continuation et l'unicité du candidat ne supposent aucun vocabulaire et valent
-donc sur un corpus d'une autre nature ; le vocabulaire réglementaire, lui, ne se
-déclencherait pas ailleurs. La solution de fond reste en amont : que l'API chandra
-transmette ses fusions en `colspan`, comme marker.
+**Portée.** La règle jouait sur **25 des 88 grilles du format aplati** ; sur le corpus HTML
+courant, où les fusions sont déclarées, **elle ne se déclenche plus du tout**. Le trou de
+continuation et l'unicité du candidat ne supposent aucun vocabulaire et valent donc sur un
+corpus d'une autre nature ; le vocabulaire réglementaire, lui, ne se déclencherait pas
+ailleurs.
 :::
+::::
 
-### Les enregistrements empilés, découpés
+:::: {.dx-finding}
+[6]{.dx-rank} [`_to_csv_bytes` · `run_pipeline`]{.dx-fn}
 
-Certains tableaux composent un enregistrement sur **deux lignes physiques sans filet entre
-elles**, l'en-tête l'annonçant sur deux niveaux :
-
-```
-Denomination  | Capital          | Q.P. Detenue   | Val. brute Titres | Chiffre d'affaires
-Siège Social  | Capitaux Propres | Divid.encaiss. | Val. nette Titres | Résultat
-```
-
-Les moteurs lisent cette page telle qu'elle est composée et rendent une seule `<tr>` par
-société, chaque cellule portant ses deux valeurs séparées par un `<br>` :
-
-```html
-<td>MDHA<br/>6 West 18th Street, New York 10011</td>
-<td>14 498 145$<br/>12 789 320$</td>
-```
-
-Rien n'est perdu à ce stade. C'est la conversion qui décidait : le `<br>` devenait une
-espace, et `14 498 145$ 12 789 320$` se retrouvait dans une seule cellule. Aucune des deux
-valeurs ne s'appariait plus, alors que l'annotation garde une ligne par ligne physique —
-sur `_0334_394331946_TAB`, la récupération numérique tombait à **0,044**.
-
-Le `<br>` est donc rendu, selon la ligne, à une espace ou à une coupure. La signature doit
-rester étroite, un libellé replié en fin de ligne portant lui aussi un `<br>` : il faut
-**plusieurs cellules coupées, toutes du même nombre de parties, dont au moins deux empilant
-deux nombres**. Une cellule renseignée une seule fois va sur la première ligne produite,
-la seconde restant vide — la convention de l'annotation.
-
-Sur les 1 209 lignes chandra du corpus, 9 déclenchent la règle, toutes dans ce fichier ;
-10 sur 1 234 chez marker, dans ce fichier et une ligne de `432668432` où deux sociétés sont
-empilées de la même façon. Le fichier passe de 11 à 20 lignes et de 0,044 à **1,000** de
-récupération numérique ; aucun autre CSV du corpus ne change d'une seule ligne.
-
-## Ce que les deux chemins partagent
-
-Passé l'extraction, marker et chandra suivent exactement le même code.
+### Écrire un CSV par tableau
 
 **Un CSV par tableau, numéroté dans l'ordre de rencontre.** `{stem}.json` produit
-`{stem}_1.csv`, `{stem}_2.csv`… Le rang est le seul lien avec l'annotation. Dès que le
-moteur découpe ou fusionne un tableau, tout le reste du SIREN est comparé de travers — 76
+`{stem}_1.csv`, `{stem}_2.csv`… **Le rang est le seul lien avec l'annotation.** Dès que le
+moteur découpe ou fusionne un tableau, tout le reste du SIREN est comparé de travers — 77
 annotations face à 78 CSV marker et 79 CSV chandra.
 
-**Les tableaux coupés par un saut de page ne sont pas recollés.** Un tel tableau est annoté
-en deux fichiers, un par page, chacun portant son en-tête réimprimé : la conversion suit
-cette granularité plutôt que d'en imposer une autre. Chandra, appelé page par page, s'y
-conforme naturellement.
-
-Reste ouvert, côté moteur cette fois : marker reçoit le PDF entier et son `TableGroup` peut
-enjamber la coupure. Sur `790256671` et `_0334_802617647_TAB`, il rend un seul CSV pour deux
-annotations, et la seconde n'est appariée à rien. L'appariement par rang reste à reprendre
-côté évaluation ([levier 02](ameliorations.qmd)).
-
-Trois autres propriétés héritées :
-
-- **Aucune interprétation du contenu** : ni nombres, ni libellés, ni cellules vides ne
-  sont touchés.
-- **Une grille rectangulaire** décidée par `_normalize_grid` avant écriture : c'est le seul
-  endroit où l'on sait encore d'où viennent les cellules manquantes.
-- **Une sérialisation unique** : séparateur `;`, encodage `utf-8-sig`, guillemets
-  seulement si la cellule contient `;`, un guillemet ou un retour à la ligne. C'est la
-  convention que relisent `evaluation_extraction.py` et le
-  [visualiseur](comparaison.qmd).
+**Une sérialisation unique** : séparateur `;`, encodage `utf-8-sig`, guillemets seulement si
+la cellule contient `;`, un guillemet ou un retour à la ligne. C'est la convention que
+relisent l'[évaluation](evaluation.qmd) et le [visualiseur](comparaison.qmd).
 
 Deux points de vigilance à l'exécution :
 
@@ -277,6 +268,25 @@ Deux points de vigilance à l'exécution :
 - **Un fichier sans aucun tableau détecté ne produit aucun CSV** et disparaît de
   l'évaluation. Le récapitulatif de fin liste ces fichiers, ceux tombés en erreur de
   lecture et ceux ignorés faute d'`--overwrite`, décomptés séparément.
+::::
+
+## Ce que l'étape ne peut pas rattraper
+
+**Les tableaux coupés par un saut de page ne sont pas recollés.** Un tel tableau est annoté
+en deux fichiers, un par page, chacun portant son en-tête réimprimé : la conversion suit
+cette granularité plutôt que d'en imposer une autre. Chandra, appelé page par page, s'y
+conforme naturellement.
+
+Reste ouvert, côté moteur cette fois : **marker reçoit le PDF entier** et son `TableGroup`
+peut enjamber la coupure. Sur `790256671` et `_0334_802617647_TAB`, il rend un seul CSV pour
+deux annotations. L'évaluation regroupe alors la référence de marker d'autant
+([méthode](evaluation.qmd#paires)) ; ce qui reste tient à
+`TAB_676250111_atypique`, coupé **en largeur**, qu'aucun regroupement par lignes ne traite.
+
+**Une structure d'en-tête différente à la source** ne se rattrape pas non plus : sur les 52
+fichiers à hauteur d'en-tête discordante, 49 ont une source parfaitement régulière — ni
+ligne courte, ni sous-ligne à replacer. Le moteur y a produit une autre structure, en amont
+de la conversion ([détail](resultats.qmd#source-irreguliere)).
 
 ::: {.callout-note appearance="simple"}
 ## Deux autres sources dans le même script

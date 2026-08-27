@@ -1,0 +1,474 @@
+---
+title: "Architecture d'extraction"
+---
+
+Le dépôt sert **deux moteurs d'extraction** derrière deux services HTTP de même interface :
+un `POST /extract` prend un PDF, rend la lecture de ses pages. Un script d'orchestration les
+appelle indifféremment, ce qui rend les deux sorties comparables sur le même corpus.
+
+::: {.callout-note appearance="simple"}
+## Périmètre de cette page
+
+Le dépôt contient aussi `api_opendataloader`, moteur alternatif **non utilisé
+actuellement** : sur des comptes sociaux scannés il traite la page comme une image et ne
+produit aucun tableau. Il n'est pas décrit ici. `api_centrale` est un service amont,
+antérieur, qui récupérait le PDF du bilan depuis l'API INPI ; il est hors du pipeline
+courant.
+:::
+
+## Deux approches du même problème
+
+::: {.dx-scroll}
+
+| | marker | chandra |
+|---|---|---|
+| Nature | **Pipeline** : détection de mise en page, OCR ligne à ligne, reconnaissance de tableau, puis correction par LLM | **Modèle de vision-langage** de bout en bout : la page en image entre, le HTML sort |
+| Modèles | Surya (~720 M paramètres par tête), en local sur GPU | `chandra-ocr-2`, servi par vllm, distant |
+| Entrée | Le **PDF entier** | **Une image par page**, PNG 200 dpi |
+| Rôle du LLM | Corriger les tableaux détectés appelé par marker, page par page | Aucun : le VLM *est* le moteur |
+| Sortie | JSON : arbre de blocs typés, chacun portant un fragment HTML et sa boîte englobante | JSON : une entrée par page, portant le HTML de la page |
+| Granularité | Un `TableGroup` peut enjamber une coupure de page | Jamais : le modèle ne voit qu'une page à la fois |
+| Coût | GPU ≥ 16 Go de VRAM, ~30–60 s par page | GPU sur llm.lab.sspcloud.fr ; une requête VLM par page |
+
+:::
+
+Conséquence pratique : **marker peut recoller un tableau coupé par un saut de page, chandra
+ne peut jamais le faire.** C'est la seule différence de granularité entre les deux, et elle
+se répercute jusque dans l'évaluation, qui regroupe la référence de marker en conséquence
+([détail](evaluation.qmd#paires)).
+
+## Les services
+
+```{=html}
+<div class="dx-flow">
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">extraction_pdf_via_api.py</span>
+    <span class="dx-flow-desc">Orchestrateur, lancé en local. Lit le parquet de
+      correspondances, télécharge chaque PDF depuis S3, le poste à l'API choisie
+      (<span class="dx-flow-code">--api marker|chandra</span>), écrit la réponse brute
+      dans <span class="dx-flow-code">reprise/output_{moteur}/{siren}.json</span>. Un
+      fichier déjà présent est ignoré : le traitement est reprenable.</span>
+  </div>
+  <div class="dx-flow-arrow">POST /extract — multipart, le PDF ; aucun timeout</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">api_marker <span class="dx-flow-code">:8001</span> — GPU</span>
+    <span class="dx-flow-desc">Charge tous les modèles Surya au démarrage (~3,5 Go de VRAM,
+      1–2 min) et les garde en mémoire. Un verrou sérialise l'inférence : un PDF à la fois
+      sur le GPU.</span>
+  </div>
+  <div class="dx-flow-arrow">appels OpenAI pour la correction des tableaux</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">marker_proxy <span class="dx-flow-code">:1324</span></span>
+    <span class="dx-flow-desc">Relais vers le LLM distant. Adapte la requête à ce que le
+      modèle sait faire et trace tout dans Langfuse.</span>
+  </div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">api_chandra <span class="dx-flow-code">:8003</span></span>
+    <span class="dx-flow-desc">Rend chaque page en PNG 200 dpi avec PyMuPDF, la soumet au
+      VLM, renvoie le HTML tel quel. Aucun GPU local : tout se joue sur le serveur
+      llm.lab.sspcloud.fr.</span>
+  </div>
+</div>
+```
+
+Chaque service est un sous-dossier de `api/` et a son propre `pyproject.toml`
+et son propre venv. Le package partagé `extraction-common` est installé **en éditable**
+partout : il porte le client S3 et, pour marker, toute la configuration OCR.
+
+## Le chemin marker
+
+### Configuration du service
+
+`libs/src/data_management/extract_image_to_json.py` centralise la configuration et
+détecte le device. Quatre paramètres décident du comportement :
+
+::: {.dx-scroll}
+
+| Paramètre | Valeur | Pourquoi |
+|---|---|---|
+| `force_ocr` | `False` | marker décide page par page. Une page née-numérique est lue directement, ~100× plus vite ; une page scannée ou à mauvaise couche texte est OCR-isée. |
+| `use_llm` | `True` | La correction LLM des tableaux, appelée via le proxy. Sans elle, l'OCR seul rend une grille souvent fragmentée. |
+| `openai_model` | `gemma4-26b-moe` | Modèle du LLM distant, servi par `llm.lab.sspcloud.fr`. |
+| `recognition_batch_size` | `32` sur GPU | Plafond imposé par 16 Go de VRAM **sur de vrais scans** : à 96, une page de ~200 lignes sature les 14,6 Go. Au-delà de ~160 le débit ne progresse plus. |
+
+:::
+
+Deux détails d'exploitation valent d'être connus : 
+  - `marker` **ignore silencieusement les valeurs booléennes `False`** de sa configuration interne (`generate_config_dict` filtre
+tout ce qui est false), donc `use_llm: False` équivaut à ne pas passer la clé ; 
+  - l'allocateur CUDA est configuré en `expandable_segments:True` avec vidage du cache entre
+requêtes, sans quoi une page dense fait OOM faute de bloc contigu sur un run long.
+
+### Extraction marker
+
+Mesuré sur les 48 JSON de `reprise/output_marker/`, d'après le `page_stats` que marker
+attache à chaque document :
+
+::: {.dx-scroll}
+
+| Mesure | Valeur |
+|---|---:|
+| Pages lues par OCR neuronal (`text_extraction_method: surya`) | 45 |
+| Pages lues nativement (`pdftext`) | 10 |
+| Requêtes LLM de correction | 145 |
+| Jetons LLM consommés | 413 560 |
+| Requêtes LLM en erreur | 11, sur 10 documents |
+
+:::
+
+Ces 11 erreurs comptent : sur un document où la correction échoue entièrement, la grille
+reste celle de l'OCR brut. C'est exactement le cas du second exemple ci-dessous.
+
+## Le chemin chandra
+
+Le service ne charge aucun modèle, mais requête à modèle herbergé sur llm.lab.sspcloud.fr. 
+Pour chaque page :
+  - rendu PNG à 200 dpi (`CHANDRA_DPI`), 
+  - envoi au VLM en `image_url` base64, `temperature=0`, `enable_thinking: false`, **5 tentatives** avec délai croissant
+(`CHANDRA_RETRIES`). 
+La réponse est stockée sans retouche.
+
+::: {.callout-important appearance="simple" collapse="true"}
+## L'API ne structure pas la réponse et c'est le facteur décisif
+
+Auparavant, le modèle aplatissait le HTML du modèle en listes de listes de
+chaînes (`pages[].tables`). Cet aplatissement détruisait tout ce que le modèle savait de la
+mise en page : `colspan`, `rowspan` (donc les cellules fusionnées) et les `<br>`, dont la
+disparition soudait les mots de deux lignes d'un même libellé (« Prêts
+etavancesconsentispar laSociété », 48 cellules du corpus).
+
+L'API renvoie désormais `pages[].html`, brut. La structuration appartient à l'étape
+suivante, qui dispose déjà d'un parseur HTML traitant les fusions. Second avantage :
+changer d'avis sur la mise en forme ne demande plus de relancer le service. Le corpus a été
+ré-extrait à ce format ; l'ancien est archivé dans `reprise/output_chandra_v1/`, et reste
+lu par la conversion.
+:::
+
+## Pourquoi un proxy entre marker et le LLM
+
+`marker_proxy` n'est pas une simple redirection. Il compense trois écarts entre ce que
+marker demande et ce que le LLM distant sait faire :
+
+- **`json_schema` non supporté.** Le proxy le convertit en `json_object` et **injecte le
+  schéma dans le prompt** : liste des champs requis, exemple de format, consigne de ne
+  renvoyer que l'objet.
+- **Réponse emballée en markdown.** Le modèle répond souvent dans un bloc ```` ```json ````
+  que `.parse()` de marker ne sait pas lire. Le proxy dé-emballe le premier bloc fencé.
+- **Aucune observabilité.** Le proxy trace chaque appel dans Langfuse et se rabat
+  silencieusement sur un client OpenAI standard si les identifiants sont absents.
+
+Il traduit aussi les erreurs du LLM en codes HTTP explicites (504 sur timeout, 502 si le
+LLM est injoignable), ce qui rend les 11 erreurs de correction du tableau ci-dessus
+lisibles dans les logs.
+
+## Exemples de sortie
+
+Les deux sections qui suivent portent sur de vraies sorties du corpus, reproduites telles
+qu'elles sont sur S3, abrégées seulement là où `…` le signale.
+
+### Cas nominal : lorsque les deux moteurs lisent la même chose
+
+`409759156` : une page, un tableau de filiales à 7 colonnes, en-tête sur deux niveaux
+(« Valeurs comptables des titres détenus » couvrant « Brute » et « Nette »), deux
+intertitres de section. marker l'a lu par OCR neuronal en 2 requêtes LLM.
+
+::: {.dx-panes .dx-side-by-side}
+::: {.dx-pane}
+::: {.dx-pane-head}
+[marker]{.dx-pane-title}[`output_marker/409759156.json`]{.dx-pane-dims}
+:::
+
+``` json
+{
+  "block_type": "Document",
+  "children": [
+    { "block_type": "Page",
+      "id": "/page/0/Page/168",
+      "bbox": [0.0, 0.0, 2481.0, 3509.0],
+      "html": "<content-ref src='/page/0/SectionHeader/0'>…
+               <content-ref src='/page/0/Table/2'>…",
+      "children": [
+        { "block_type": "SectionHeader",
+          "html": "<h1>Filiales et participations</h1>" },
+        { "block_type": "Table",
+          "id": "/page/0/Table/2",
+          "bbox": [189.6, 388.1, 2107.3, 1695.4],
+          "html": "<table><tbody><tr>…</tbody></table>",
+          "children": [
+            { "block_type": "TableCell",
+              "html": "<th>Brute</th>" },
+            …
+          ] }
+      ] }
+  ],
+  "metadata": {
+    "page_stats": [
+      { "page_id": 0,
+        "text_extraction_method": "surya",
+        "block_metadata": {
+          "llm_request_count": 2,
+          "llm_error_count": 0,
+          "llm_tokens_used": 3797 } }
+    ] }
+}
+```
+
+::: {.dx-pane-note}
+Un **arbre de blocs typés**. Chaque bloc porte son type, sa boîte englobante et un
+fragment HTML ; le `html` d'un parent n'est qu'un jeu de pointeurs `<content-ref>` vers ses
+enfants. Le tableau est dans le `html` du bloc `Table`, ses `TableCell` enfants le
+répètent cellule par cellule.
+:::
+:::
+
+::: {.dx-pane}
+::: {.dx-pane-head}
+[chandra]{.dx-pane-title}[`output_chandra/409759156.json`]{.dx-pane-dims}
+:::
+
+``` json
+{
+  "pages": [
+    { "page": 1,
+      "html": "<div data-bbox=\"70 66 147 84\"
+                    data-label=\"Section-Header\">
+               <h2>Filiales et participations</h2>
+               </div>
+               <div data-bbox=\"70 85 328 103\"
+                    data-label=\"Text\">
+               <p>Exprimé en K€</p>
+               </div>
+               <div data-bbox=\"65 118 862 480\"
+                    data-label=\"Table\">
+               <table border=\"1\">
+               <thead>…</thead>
+               <tbody>…</tbody>
+               </table>
+               </div>" }
+  ]
+}
+```
+
+::: {.dx-pane-note}
+**Une entrée par page** qui porte le HTML de toute la page. Ce n'est pas une liste de
+tableaux mais une **segmentation de mise en page** : un `<div data-label>` par région
+visuelle — `Table`, `Section-Header`, `Text`, `Footnote` — avec sa boîte englobante. Les
+tableaux déclarent `<thead>` / `<tbody>`.
+:::
+:::
+:::
+
+Le `<table>` lui-même, chez les deux, porte les mêmes fusions :
+
+::: {.dx-panes .dx-side-by-side}
+::: {.dx-pane}
+::: {.dx-pane-head}
+[marker — bloc `Table`]{.dx-pane-title}
+:::
+
+``` html
+<table><tbody>
+<tr><th rowspan=2>Filiales et participations</th>
+    <th rowspan=2>Capital</th>
+    <th rowspan=2>Capitaux<br/>propres<br/>autres que le<br/>capital</th>
+    <th rowspan=2>Quote-<br/>part du<br/>capital<br/>détenu</th>
+    <th colspan=2>Valeurs<br/>comptables des<br/>titres détenus</th>
+    <th rowspan=2>Résultat<br/>du dernier<br/>exercice<br/>clos</th></tr>
+<tr><th>Brute</th><th>Nette</th></tr>
+<tr><td colspan=7><b>A. Renseignements détaillés</b></td></tr>
+<tr><td colspan=7><b>Filiales (+ de 50% …)</b></td></tr>
+<tr><td>Globecast France</td><td>2 103</td><td>12 436</td>
+    <td>100</td><td>55 600</td><td>35 600</td><td>(10 064)</td></tr>
+…
+</tbody></table>
+```
+:::
+
+::: {.dx-pane}
+::: {.dx-pane-head}
+[chandra — div `Table`]{.dx-pane-title}
+:::
+
+``` html
+<table border="1">
+<thead>
+<tr><th rowspan="2">Filiales et participations</th>
+    <th rowspan="2">Capital</th>
+    <th rowspan="2">Capitaux propres autres que le capital</th>
+    <th rowspan="2">Quote-part du capital détenu</th>
+    <th colspan="2">Valeurs comptables des titres détenus</th>
+    <th rowspan="2">Résultat du dernier exercice clos</th></tr>
+<tr><th>Brute</th><th>Nette</th></tr>
+</thead>
+<tbody>
+<tr><td colspan="7"><b>A. Renseignements détaillés</b></td></tr>
+<tr><td colspan="7"><b>Filiales (+ de 50% …)</b></td></tr>
+<tr><td>Globecast France</td><td>2 103</td><td>12 436</td>
+    <td>100</td><td>55 600</td><td>35 600</td><td>(10 064)</td></tr>
+…
+</tbody>
+</table>
+```
+:::
+:::
+
+Trois différences de forme, aucune de fond :
+
+  - marker n'émet ni `<thead>` ni `<tbody>` sémantique et replie ses libellés d'en-tête en `<br>` là où le VLM les rend d'une pièce ;
+  - chandra guillemette ses attributs. La mise en forme les ramène donc au **même CSV, ligne pour ligne** :
+
+``` text
+Filiales et participations;Capital;Capitaux propres autres que le capital;…;Valeurs comptables des titres détenus;;Résultat du dernier exercice clos
+;;;;Brute;Nette;
+A. Renseignements détaillés;;;;;;
+Filiales (+ de 50% du capital détenu par la société);;;;;;
+Globecast France;2 103;12 436;100;55 600;35 600;(10 064)
+Globecast America;230 358;(231 699);100;263 447;0;(1310)
+```
+
+`output_csv/marker/409759156_1.csv` et `output_csv/chandra/409759156_1.csv` sont identiques, à un espace près dans « Quote-part ».
+
+Cette paire est parfaite des deux côtés : `col_recovery`, `row_recovery` et
+`numeric_recovery` valent **1,000** pour les deux moteurs, et `total_extraction` vaut 1.
+Quand la sortie du moteur porte ses fusions, la chaîne entière tient.
+
+### Cas de décrochage : lorsque la correction LLM échoue
+
+`0497_423944677_TAB` : même famille de tableau, 12 colonnes. Le `page_stats` de marker y
+porte `llm_request_count: 0` et `llm_error_count: 1` : **la correction LLM n'a jamais
+abouti**, et la grille reste celle de l'OCR brut. Chandra, lui, rend une page propre.
+
+::: {.dx-panes .dx-side-by-side}
+::: {.dx-pane}
+::: {.dx-pane-head}
+[marker sans correction LLM]{.dx-pane-title}
+:::
+
+``` html
+<table><tbody>
+<tr><th>SOCIETES</th><th>Capital</th>
+    <th>Capitaux<br>Propres</th>
+    <th>Quote-<br>part du<br>capital<br>détenu<br>en %</th>
+    <th>Nombre<br>de<br>titres<br>détenus</th>
+    <th>Valeur d'inventaire<br>des titres détenus<br>Brute Nette</th>
+    … </tr>
+<tr><th>A – FILIALES DETENUES A 50% ET PLUS
+        1. PARTICIPATIONS DONT LA VALEUR D'INVENTAIRE EXCEDE 1 %</th>
+    <th>50% ET PLU<br>ONT LA VALI</th>
+    <th>S<br>EUR D'INVENT</th>
+    <th>AIRE EXCE</th><th>DE 1 % DU C</th>
+    <th>DU CAPITAL DE LA SOCIETE :</th>
+    <th>ETE :</th><th></th><th></th><th></th><th></th></tr>
+<tr><th>Wilkes (*)</th><th>877 668</th><th>1 070 093</th>
+    <th>100</th>
+    <th>100 223 698 566</th>
+    <th>566 1 734 110 1 734 110</th>
+    <th>-</th><th>1</th><th>1</th>
+    <th>57 127</th><th>38 471</th></tr>
+…
+</tbody></table>
+```
+
+::: {.dx-pane-note}
+Quatre défauts, tous structurels : 
+
+  - **aucune fusion déclarée** (ni `colspan` ni `rowspan`,
+  donc « Brute Nette » soudé dans une seule cellule d'en-tête) ; 
+  - **l'intertitre de section éclaté** en fragments de mots sur toute la largeur (`50% ET PLU`, `EUR D'INVENT`) ;
+  - **des valeurs concaténées** — `100 223 698 566` fond la quote-part `100` et le nombre de
+  titres `223 698 566`, et `566` reparaît en tête de la cellule suivante ; 
+  - **des tirets lus comme des chiffres**, `-` devenant `1`, `ı`, `'` ou `,`. Toutes les lignes sont en
+  `<th>`, y compris les données.
+:::
+:::
+
+::: {.dx-pane}
+::: {.dx-pane-head}
+[chandra]{.dx-pane-title}
+:::
+
+``` html
+<div data-bbox="82 8 988 990" data-label="Table">
+<table border="1">
+<thead>
+<tr><th rowspan="2">SOCIETES</th>
+    <th rowspan="2">Capital</th>
+    <th rowspan="2">Capitaux Propres</th>
+    <th rowspan="2">Quote-part du capital détenu en %</th>
+    <th rowspan="2">Nombre de titres détenus</th>
+    <th colspan="2">Valeur d'inventaire des titres détenus</th>
+    … </tr>
+<tr><th>Brute</th><th>Nette</th></tr>
+</thead>
+<tbody>
+<tr><td colspan="12"><b>A – FILIALES DETENUES A 50% ET PLUS</b></td></tr>
+<tr><td colspan="12"><b>1. PARTICIPATIONS DONT LA VALEUR
+        D'INVENTAIRE EXCEDE 1 % DU CAPITAL DE LA SOCIETE :</b></td></tr>
+<tr><td>Wilkes (*)</td><td>877 668</td><td>1 070 093</td>
+    <td>100</td><td>223 698 566</td>
+    <td>1 734 110</td><td>1 734 110</td>
+    <td>-</td><td>-</td><td>-</td>
+    <td>57 127</td><td>38 471</td></tr>
+…
+</tbody>
+</table>
+</div>
+<div data-bbox="988 380 998 610" data-label="Footnote">
+<p>(*) Données 2020 / Données 2021 disponibles le 30-06-2022</p>
+</div>
+```
+
+::: {.dx-pane-note}
+Le bloc « valeur d'inventaire » est déclaré `colspan="2"` et détaillé sur une seconde
+ligne d'en-tête ; les deux intertitres sont des lignes autonomes en `colspan="12"` ; les
+tirets sont des tirets ; la note de bas de tableau est un bloc séparé, hors du
+`<table>`. Rien à reconstituer.
+:::
+:::
+:::
+
+Les CSV qui en découlent portent tout l'écart :
+
+``` text
+marker  : SOCIETES;…;Valeur d'inventaire des titres détenus Brute Nette;…        ← 11 colonnes
+          A – FILIALES … EXCEDE 1 %;50% ET PLU ONT LA VALI;S EUR D'INVENT;…
+          Wilkes (*);877 668;1 070 093;100;100 223 698 566;566 1 734 110 1 734 110;-;1;1;57 127;38 471
+
+chandra : SOCIETES;…;Valeur d'inventaire des titres détenus;;…                   ← 12 colonnes
+          ;;;;;Brute;Nette;;;;;
+          A – FILIALES DETENUES A 50% ET PLUS;;;;;;;;;;;
+          1. PARTICIPATIONS DONT LA VALEUR D'INVENTAIRE EXCEDE 1 % …;;;;;;;;;;;
+          Wilkes (*);877 668;1 070 093;100;223 698 566;1 734 110;1 734 110;-;-;-;57 127;38 471
+```
+
+Mesuré sur cette paire, l'écart est net : marker récupère **13 des 66 valeurs numériques
+attendues (19,7 %)** et n'apparie que 9 colonnes sur 12 ; chandra en récupère **55 (83,3 %)**
+et apparie les 12 colonnes. **L'écart n'est imputable ni à la mise en forme ni à la mesure :
+il est dans la sortie du moteur.**
+
+## Comparaison des *outputs* de chaque modèle
+
+Synthèse de ce que l'étape suivante peut exploiter, et de ce qu'elle doit deviner :
+
+::: {.dx-scroll}
+
+| Information | marker | chandra |
+|---|---|---|
+| Fusions `colspan` / `rowspan` | Oui : 219 et 354 balises, 41 et 37 documents sur 48 | Oui : 156 et 297 balises, 40 et 33 documents |
+| `<thead>` / `<tbody>` | Non | Oui : 74 grilles sur 88 |
+| Boîte englobante par bloc | Oui (`bbox`, `polygon`) | Oui (`data-bbox`) |
+| Type de bloc | Oui (`block_type`) | Oui (`data-label`) |
+| Libellés repliés (`<br>`) | Oui, très souvent | Rarement, le VLM rend le libellé d'une pièce |
+| Découpage en tableaux | Blocs `Table` / `TableGroup`, un tableau peut enjamber deux pages | Régions visuelles : **un tableau traversé par un intertitre ressort en plusieurs `<table>`** |
+| Journal d'exécution | Oui (`page_stats` : méthode de lecture, requêtes et erreurs LLM, jetons) | Non dans le corpus |
+
+:::
+
+Deux conséquences pour la suite :
+
+- **Le balisage de chandra permet de recoller** ce que sa segmentation a séparé : un bloc
+  sans `<thead>`, ou sans ligne de plusieurs `th`, est la suite du précédent. C'est ce que
+  fait l'étape 4 de la [mise en forme](conversion.qmd).
+- **Les fusions se traitent une seule fois, pour les deux moteurs.** Puisque les deux
+  rendent du HTML, un unique parseur les développe en positions de grille — c'est l'étape 2
+  de la même page.

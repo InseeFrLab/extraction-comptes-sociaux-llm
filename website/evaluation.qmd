@@ -1,0 +1,499 @@
+---
+title: "Évaluation"
+subtitle: "Comment une prédiction est normalisée, puis comparée à son annotation"
+---
+
+`scripts/evaluation_extraction.py` confronte chaque CSV prédit au tableau annoté à la main
+et écrit quatre métriques par paire dans
+`s3://projet-extraction-tableaux/reprise/eval/evaluation.parquet`.
+
+Comparer deux tableaux n'est pas comparer deux fichiers. Les deux côtés écrivent le même
+montant autrement (`3342864` contre `3 342 864`), le même libellé autrement (`CAPITAL`
+contre `Capital`), et surtout **ne s'accordent pas sur la grille** : rien ne garantit que la
+ligne 5 de l'un corresponde à la ligne 5 de l'autre. D'où l'ordre du traitement :
+**délimiter, normaliser, apparier, puis seulement comparer.**
+
+```{=html}
+<div class="dx-flow">
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">0. Constituer les paires</span>
+    <span class="dx-flow-desc">Une annotation XLSX face à un CSV, par rang au sein d'un SIREN.</span>
+  </div>
+  <div class="dx-flow-arrow">deux grilles de chaînes</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">1. Délimiter les zones</span>
+    <span class="dx-flow-desc">Hauteur d'en-tête de colonnes et largeur d'en-tête de lignes, de chaque côté.</span>
+  </div>
+  <div class="dx-flow-arrow">zone d'en-tête, zone de données</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">2. Normaliser</span>
+    <span class="dx-flow-desc">Libellés et nombres ramenés à une forme canonique — pour la
+      seule comparaison, jamais dans les données.</span>
+  </div>
+  <div class="dx-flow-arrow">formes comparables</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">3. Apparier lignes et colonnes</span>
+    <span class="dx-flow-desc">Similarité de Levenshtein sur les libellés d'en-tête, appariement stable, seuil 0,5.</span>
+  </div>
+  <div class="dx-flow-arrow">correspondances ligne↔ligne et colonne↔colonne</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">4. Comparer les cellules</span>
+    <span class="dx-flow-desc">Quatre métriques par paire, écrites dans le parquet.</span>
+  </div>
+</div>
+```
+
+## Étape 0 — Constituer les paires {#paires}
+
+L'appariement se fait **par rang au sein d'un SIREN** : `{siren}_1.xlsx` face à
+`{siren}_1.csv`, `{siren}_2.xlsx` face à `{siren}_2.csv`. C'est le seul lien entre les deux
+côtés, et sa fragilité est le [levier 02](ameliorations.qmd) : dès que le moteur découpe ou
+fusionne un tableau, les rangs se désynchronisent et toute la suite du SIREN est comparée de
+travers.
+
+Le chargement est minimal, de part et d'autre : le CSV est relu en `;` / `utf-8-sig`, le
+XLSX sans ligne d'en-tête et **lignes entièrement vides retirées**. Aucune valeur n'est
+touchée — tout ce qui suit compare des chaînes.
+
+### Le regroupement des coupures de page, propre à marker
+
+Un tableau à cheval sur deux pages est **annoté une page par fichier**. Chandra est appelé
+page par page et rend la même segmentation : rien à faire. Marker reçoit le PDF entier et
+son `TableGroup` enjambe parfois la coupure — sur 3 des 6 documents multi-pages du corpus.
+L'annotation `_2` n'est alors appariée à rien, et ses cellules quittent le dénominateur en
+silence.
+
+Face à un tableau marker d'un seul tenant, **la référence de marker est regroupée
+d'autant** — et elle seule. Deux signatures, et deux seulement, désignent une coupure de
+page, à largeur de colonnes identique :
+
+- la suite **n'a pas d'en-tête de colonnes** et reprend directement sur du contenu, données
+  ou intertitre ;
+- la suite **réimprime exactement le même en-tête**, mêmes libellés dans le même ordre,
+  comme le PDF le réimprime en tête de page.
+
+Un tableau coupé **en largeur** — mêmes lignes, d'autres colonnes sur la page suivante —
+n'entre dans aucun des deux cas : les largeurs diffèrent, et concaténer par lignes serait
+faux.
+
+::: {.dx-evidence}
+**Effet.** Quatre documents concernés. Les annotations marker orphelines tombent de 5 à 1, ce
+qui remet **147 cellules dans le dénominateur, dont 103 correctement extraites** qui
+n'étaient jamais comptées. Deux tableaux réellement distincts ne sont jamais regroupés pour
+faire tomber le compte : la sous-détection du moteur reste visible. La référence de chandra
+n'est jamais touchée.
+:::
+
+| Méthode | CSV produits | Annotations après regroupement | Paires évaluées |
+|---|---:|---:|---:|
+| marker | 78 | 73 | 72 |
+| chandra | 79 | 77 | 76 |
+
+## Étape 1 — Délimiter les zones {#zones}
+
+Avant toute comparaison, il faut savoir où s'arrête l'en-tête et où commencent les données.
+Deux fonctions le décident, **indépendamment de chaque côté** — c'est là que se joue
+l'essentiel.
+
+:::: {.dx-finding}
+[1a]{.dx-rank} [`detect_column_header_height`]{.dx-fn}
+
+### Combien de lignes forment l'en-tête de colonnes
+
+Deux phases, sur le taux de cellules non numériques de chaque ligne :
+
+1. **Absorber les lignes de tête majoritairement numériques** (taux < 0,5) — un tableau qui
+   s'ouvre sur une ligne de dates ou de millésimes.
+2. **Puis absorber les lignes majoritairement non numériques** (taux ≥ 0,5) : ce sont les
+   lignes d'en-tête proprement dites.
+
+Deux garde-fous : si la phase 2 n'absorbe rien, il n'y a **pas d'en-tête de colonnes** (cas
+des tableaux de filiales sans ligne d'en-tête) ; si elle absorbe *toutes* les lignes
+restantes — typique d'un tableau à dominante textuelle — on retombe sur les seules lignes
+100 % non numériques.
+
+::: {.dx-evidence}
+**C'est le meilleur prédicteur d'un fichier réussi, et il ne se corrige pas.** La
+récupération vaut 65,1 % quand la hauteur concorde entre annotation et prédiction, 48,4 %
+sinon (marker) ; 92,6 % contre 69,8 % (chandra). Mais les deux remèdes qui semblaient
+s'imposer — forcer la hauteur de l'annotation, ou décaler la grille prédite d'autant — ont
+été rejoués et **dégradent tous deux la mesure** : sur ces fichiers, le moteur a produit une
+autre structure d'en-tête en amont, et 49 des 52 fichiers discordants ont une source
+parfaitement régulière ([détail](resultats.qmd#hauteur-entete)).
+:::
+::::
+
+:::: {.dx-finding}
+[1b]{.dx-rank} [`detect_row_header_width`]{.dx-fn}
+
+### Combien de colonnes forment l'en-tête de lignes
+
+La première colonne est toujours dedans — elle porte les raisons sociales. Les suivantes la
+rejoignent tant qu'elles sont **majoritairement non numériques** *et* portent **au moins une
+valeur qui ressemble à un nombre**.
+
+En pratique cette délimitation ne pose pas de problème : la largeur détectée concorde entre
+annotation et prédiction sur **70 paires marker sur 72 et 76 sur 76 chez chandra**. Toute la
+variance est du côté de la hauteur.
+::::
+
+## Étape 2 — Normaliser {#normalisation}
+
+La normalisation ne touche **jamais les données** : elle produit une forme canonique le
+temps d'une comparaison. Deux familles de retraitements, deux fonctions distinctes — l'une
+pour les libellés qui servent à apparier, l'autre pour les valeurs qui servent à mesurer.
+
+### Ce qui se passe avant : la lecture des fichiers {#lecture}
+
+Aucune valeur n'est retouchée à ce stade, mais trois décisions de lecture conditionnent tout
+ce qui suit :
+
+::: {.dx-scroll}
+
+| | Annotation (`.xlsx`) | Prédiction (`.csv`) |
+|---|---|---|
+| Lecture | `read_excel`, **sans ligne d'en-tête** | `csv.reader`, séparateur `;` |
+| Encodage | — | `utf-8-sig` : la marque d'ordre d'octets éventuelle est retirée |
+| Typage | **tout en chaînes** (`dtype=str`), valeurs manquantes → chaîne vide | idem |
+| Mise en forme | **les lignes entièrement vides sont retirées** et les rangs renumérotés | les lignes courtes sont complétées à droite par des cellules vides |
+
+:::
+
+Le typage en chaînes est ce qui rend la mesure possible : un montant lu comme nombre par
+Excel perdrait son écriture d'origine, et c'est précisément l'écriture que l'on veut pouvoir
+comparer. Le retrait des lignes vides de l'annotation, en revanche, décale les rangs — c'est
+pourquoi l'appariement ne se fait jamais par position mais par libellé (étape 3).
+
+:::: {.dx-finding}
+[2a]{.dx-rank} [`_normalize_numeric_str` · `_canonical_number`]{.dx-fn}
+
+### Les valeurs : huit retraitements, dans cet ordre
+
+Chaque cellule comparée passe par cette suite. L'ordre compte : les parenthèses doivent être
+retirées avant qu'on cherche un nombre, et les espaces séparateurs avant qu'on teste le
+format.
+
+::: {.dx-scroll}
+
+| # | Retraitement | Règle exacte | Exemple |
+|---:|---|---|---|
+| 1 | **Espaces de bord** | `strip()` | `"  25 000  "` → `25 000` |
+| 2 | **Variantes de tiret** | dix caractères ramenés au trait d'union `-` (liste ci-dessous) | `—` → `-` · `−30` → `-30` |
+| 3 | **Parenthèses comptables** | `^\((.+)\)$` : le contenu est extrait, le signe négatif mémorisé | `(1 976)` → `1 976`, négatif |
+| 4 | **Signe négatif détaché** | `^-` suivi d'espaces éventuels : retiré, signe mémorisé | `- 30 000` → `30 000`, négatif |
+| 5 | **Espaces séparateurs de milliers** | entre deux chiffres : espace ordinaire, insécable (U+00A0), fine insécable (U+202F), tabulation, retour à la ligne. **Trois passes** — un nombre à deux séparateurs n'en perdrait qu'un | `1 234 567` → `1234567` |
+| 6 | **Pourcentages** | un nombre suivi de `%` est divisé par 100, formaté à six chiffres significatifs | `100%` et `100,00%` → `1` · `70%` → `0.7` |
+| 7 | **Nombre pur** | séparateur décimal ramené au point ; zéros de tête et zéros décimaux finaux retirés. **Sans passer par `float`** | `2,08` et `2.080` → `2.08` · `0042` → `42` |
+| 8 | **Signe réappliqué** | le `-` des étapes 3 et 4 est remis devant la forme canonique | → `-1976`, `-30000` |
+
+:::
+
+**Les étapes 3, 4, 6 et 7 sont conditionnelles.** Si ce qui reste après les étapes 3 à 5
+n'est pas un nombre, aucune de ces interprétations ne s'applique : la cellule est rendue avec
+ses seuls retraitements 1, 2 et 5, et la comparaison devient **textuelle**. C'est ce qui
+évite d'attribuer un signe négatif à `(en milliers d'euros)` ou à `- FILIALES`.
+
+::: {.callout-note collapse="true"}
+## Les dix variantes de tiret unifiées
+
+Toutes jouent le même rôle dans ces tableaux — marque d'absence dans une cellule de données,
+signe négatif devant un montant, séparateur dans un libellé — et ne doivent donc pas
+distinguer deux valeurs.
+
+| Caractère | Point de code | Nom Unicode |
+|---|---|---|
+| `‐` | U+2010 | HYPHEN |
+| `‑` | U+2011 | NON-BREAKING HYPHEN |
+| `‒` | U+2012 | FIGURE DASH |
+| `–` | U+2013 | EN DASH (demi-cadratin) |
+| `—` | U+2014 | EM DASH (cadratin) |
+| `―` | U+2015 | HORIZONTAL BAR |
+| `−` | U+2212 | MINUS SIGN |
+| `﹘` | U+FE58 | SMALL EM DASH |
+| `﹣` | U+FE63 | SMALL HYPHEN-MINUS |
+| `－` | U+FF0D | FULLWIDTH HYPHEN-MINUS |
+
+Le trait d'union ASCII `-` (U+002D) est la forme d'arrivée. L'annotation écrit `-` là où les
+moteurs rendent `—` : sans cette équivalence, 14 cellules de `TAB_552096281_2` étaient
+comptées « texte à la place du nombre », et `A - FILIALES DETENUES` ne s'appariait pas à
+`A – FILIALES DETENUES` (similarité 0,25, les deux ne différant que par le demi-cadratin).
+:::
+
+::: {.callout-note collapse="true"}
+## Pourquoi l'étape 7 n'emprunte pas `float`
+
+Un formatage en `.10g` — dix chiffres significatifs — arrondirait `10 640 226 396`, onze
+chiffres, qui figure au corpus. Deux montants voisins deviendraient la même chaîne et une
+erreur de lecture serait créditée comme une extraction juste. La canonisation est donc
+faite par découpage de chaîne : partie entière débarrassée de ses zéros de tête, partie
+décimale de ses zéros finaux, aucune conversion en flottant. Seule l'étape 6, sur des
+pourcentages toujours petits, utilise encore `float`.
+:::
+
+::: {.dx-evidence}
+**Ce que ces retraitements rattrapent.** 522 des cellules récupérées chez marker (17,0 %) et
+573 chez chandra (12,5 %) ne sont identiques qu'**après** normalisation — dont 331 et 335 au
+seul titre du séparateur de milliers
+([décompte](resultats.qmd#bien-lu-ecrit-autrement)). Aucune n'est une erreur de lecture,
+mais toutes le deviendraient si la comparaison se faisait caractère par caractère.
+:::
+::::
+
+:::: {.dx-finding}
+[2b]{.dx-rank} [`_normalize_label`]{.dx-fn}
+
+### Les libellés : quatre retraitements, pour l'appariement
+
+Un libellé ne sert pas à mesurer mais à retrouver la bonne ligne et la bonne colonne. Sa
+canonisation est donc différente — plus agressive sur la graphie, aveugle aux nombres.
+
+::: {.dx-scroll}
+
+| # | Retraitement | Exemple |
+|---:|---|---|
+| 1 | **Variantes de tiret** unifiées, comme pour les valeurs | `A — FILIALES` → `A - FILIALES` |
+| 2 | **Accents retirés** : décomposition NFKD, puis suppression des caractères combinants | `RÉSULTAT` → `RESULTAT` |
+| 3 | **Casse neutralisée** par `casefold` | `RESULTAT` → `resultat` |
+| 4 | **Espaces réduits** : découpage sur tout blanc, recollage par une espace simple | `  resultat   dernier  exercice ` → `resultat dernier exercice` |
+
+:::
+
+Un libellé de ligne ou de colonne n'est d'ailleurs pas une cellule mais **la concaténation de
+son en-tête** : `_build_header_texts` assemble les cellules non vides de la zone d'en-tête
+correspondante, séparées par ` | `. Une colonne est donc décrite par tout son en-tête empilé,
+une ligne par tout son en-tête de gauche — d'où des libellés comme `Capital | Nette`, dont
+l'étape 3 fait son affaire.
+
+::: {.dx-evidence}
+**Sans ces retraitements**, `Capital` et `CAPITAL` tombent à **0,14 de similarité** — sous le
+seuil de 0,5, donc non appariés. Sur `TAB_300221017_1`, dont chandra compose tout l'en-tête en
+capitales, les 11 colonnes échouaient à s'apparier et les **350 cellules de données étaient
+comptées perdues, pour une extraction juste à 94 %**. Gain mesuré : +0,7 pt de `col_recovery`
+chez marker, +1,4 pt chez chandra, aucun fichier dégradé.
+:::
+::::
+
+::: {.callout-note appearance="simple"}
+## Trois de ces retraitements sont récents
+
+Le séparateur décimal (étape 7), le signe négatif détaché (étape 4) et les parenthèses
+comptables (étape 3) ont été portés depuis `build_data.py`, où ils existaient déjà pour le
+diagnostic du site. Avant cela, 38 cellules marker et 37 chandra étaient comptées fausses
+pour cette seule raison, et **la comparaison avait deux chemins** : les cellules à unité, à
+parenthèses ou à placeholder partaient en comparaison de chaîne brute, ce qui séparait aussi
+`100%` de `100,00%`.
+
+Gain mesuré : `numeric_recovery` 0,725 → **0,734** (marker) et 0,897 → **0,910** (chandra),
+récupération par cellule hors vides 54,2 → **55,7 %** et 80,0 → **82,0 %**, et surtout
+**cinq tableaux parfaits de plus chez chandra** — de 36 à 41
+([détail](ameliorations.qmd)).
+:::
+
+### Ce qui n'est délibérément pas normalisé {#non-normalise}
+
+Chacun de ces cas pourrait être absorbé, et chacun a été écarté pour une raison précise.
+
+::: {.dx-scroll}
+
+| Cas | Exemple | Pourquoi il reste compté faux |
+|---|---|---|
+| **Point séparateur de milliers** | `6 901` contre `6.901` | `6.901` est ambigu : six mille neuf cent un à la française, ou 6,901 à l'anglo-saxonne. Trancher demanderait une heuristique — trois chiffres après le point — que le corpus ne justifie pas encore. |
+| **Unité en suffixe** | `15,24 €` contre `15,24` | La retirer rendrait `4 139 €` égal à `4 139 USD` : une confusion de devise serait créditée comme une extraction juste. Vaut 1,0 pt de récupération chez chandra, non pris. |
+| **Unité en préfixe** | `USD 4.630` | Même raison, et la forme n'est même pas reconnue comme numérique (voir ci-dessous). |
+| **Placeholders entre eux** | `-` contre `NC` | Les deux marquent une absence, mais rien ne dit qu'elles marquent la *même* absence. Elles restent comparées comme du texte. |
+| **Signe opposé** | `1 976` contre `(1 976)` | Mêmes chiffres, signe inverse : ce n'est pas un écart d'écriture mais une valeur différente. Compté faux, à raison. |
+
+:::
+
+### Les deux notions de nombre, et où elles divergent {#deux-notions}
+
+Deux fonctions, deux rôles qui ne se recouvrent pas tout à fait : **`_looks_numeric` décide
+ce qui entre au dénominateur**, `_normalize_numeric_str` décide **si deux valeurs sont
+égales**. La première est plus permissive sur les unités, la seconde sur les espaces et les
+tirets.
+
+::: {.dx-scroll}
+
+| Forme | Comptée au dénominateur ? | Comparée comment ? |
+|---|---|---|
+| `25 000`, `2,08` — espace ordinaire | oui | comme nombre |
+| cellule vide | **oui** | comme texte vide |
+| `25 000` — espace **insécable** | **non** | comme nombre |
+| `−30000` — signe moins Unicode | **non** | comme nombre |
+| `15,24 €`, `344 369 NOK` — unité en suffixe | oui | **comme texte** |
+| `USD 4.630` — unité en préfixe | non | comme texte |
+| `100,00%` | oui | comme nombre, converti en `1` |
+| `(14)` — parenthèses comptables | oui | comme nombre, converti en `-14` |
+| `(12%)` — parenthèses **et** pourcentage | **non** | comme nombre, converti en `-0.12` |
+| `-`, `NC`, `ND`, `N/A` | oui | comme texte, tirets unifiés |
+| `Capital social` | non | — |
+
+:::
+
+Les quatre lignes en gras sont les divergences : une valeur que la comparaison saurait
+canoniser mais que le dénominateur ne compte pas. **Mesurée sur le corpus, cette zone aveugle
+est vide** — aucune cellule de la zone de données des 77 annotations n'écrit ses milliers
+avec une espace insécable, ni son signe avec un moins Unicode, ni un pourcentage entre
+parenthèses. Le défaut est réel dans le code, sans effet sur les chiffres publiés.
+
+::: {.callout-note collapse="true"}
+## Un cas limite : l'espace séparateur avale les retours à la ligne
+
+L'étape 5 traite comme séparateur de milliers tout blanc entre deux chiffres, **retour à la
+ligne compris**. Huit cellules d'annotation empilent trois valeurs dans une seule cellule
+Excel, séparées par des retours à la ligne : leur canonisation produirait un unique nombre à
+rallonge. Elles sont sauvées par `_looks_numeric`, qui ne les reconnaît pas et les écarte du
+dénominateur — le bon résultat, obtenu par accident. Ces cellules relèvent du découpage des
+enregistrements empilés, traité en amont ([étape 3 de la mise en forme](conversion.qmd)).
+:::
+
+Et puisque `_looks_numeric("")` vaut vrai, **les cellules vides de l'annotation entrent au
+dénominateur** — un tiers des cellules comptées, créditées quand la prédiction est vide au
+même endroit ([détail](resultats.qmd#cellules-vides)).
+
+## Étape 3 — Apparier lignes et colonnes {#appariement}
+
+C'est ici que les deux grilles sont mises en correspondance. Trois temps :
+
+1. **Construire un texte représentatif** par ligne et par colonne
+   (`_build_header_texts`) : les cellules non vides de l'en-tête correspondant, concaténées
+   par ` | `. Une colonne est donc décrite par tout son en-tête empilé, une ligne par tout
+   son en-tête de gauche.
+2. **Calculer les similarités** : Levenshtein normalisé sur les libellés canoniques, soit
+   `1 − distance / longueur du plus long`.
+3. **Apparier** par matching stable de Gale-Shapley, l'annotation proposant et la prédiction
+   acceptant, **puis** ne retenir que les paires dont la similarité atteint **0,5**.
+
+::: {.callout-important appearance="simple"}
+## L'ordre du seuil et de l'appariement compte
+
+Le seuil est appliqué **après** le matching. Une ligne annotée peut donc être appariée à une
+prédiction médiocre, cette paire être rejetée par le seuil, et **aucune reprise n'avoir
+lieu** — alors qu'un meilleur candidat était libre. 15 cas chez marker. C'est la troisième
+faiblesse du [levier 01](ameliorations.qmd), dont le remède mesuré est un **alignement
+monotone** respectant l'ordre des lignes : récupération numérique 52,7 → 63,1 %.
+
+L'alignement monotone a un second avantage propre à ce corpus : il rend impossible
+l'appariement croisé de deux filiales d'un même groupe aux noms voisins — erreur observée à
+plusieurs reprises, que ni le seuil ni l'appariement stable n'empêchent.
+:::
+
+Deux faiblesses de la similarité elle-même, mesurées à part : **un mot ajouté fait chuter le
+score** (`'Capital'` contre `'Capital | Nette'` donne 0,47, juste sous le seuil), et **une
+graphie différente aussi** — d'où `_normalize_label` à l'étape 2a. La première est le gain à
+deux chiffres du levier 01 : +5,5 pts de `col_recovery`.
+
+## Étape 4 — Comparer les cellules {#metriques}
+
+Seules les cellules de la **zone de données** sont comparées : `r ≥ hauteur d'en-tête` et
+`c ≥ largeur d'en-tête de lignes`, du côté de l'annotation. Pour chacune que
+`_looks_numeric` accepte :
+
+- si la ligne **et** la colonne sont appariées, on regarde la cellule prédite à la position
+  correspondante ;
+- les deux valeurs passent par `_normalize_numeric_str` et sont égales ou non — un seul
+  chemin, depuis le portage des écarts d'écriture (cf. [ci-dessus](#deux-notions)) ;
+- sans ligne *ou* sans colonne appariée, la cellule est comptée perdue — on ne sait pas
+  quelle cellule prédite regarder.
+
+### Les quatre métriques
+
+::: {.dx-scroll}
+
+| Métrique | Définition | Ce qu'elle mesure |
+|---|---|---|
+| `col_recovery` | colonnes annotées appariées / colonnes annotées | Rappel sur la structure en colonnes. Une colonne prédite en trop ne coûte rien. |
+| `row_recovery` | lignes annotées appariées / lignes annotées | Idem en lignes. |
+| `numeric_recovery` | cellules numériques de la zone de données retrouvées / attendues | La métrique de fond. **Cellules vides incluses au dénominateur.** |
+| `total_extraction` | 1 si **toutes** les colonnes, **toutes** les lignes et **toutes** les cellules numériques sont retrouvées, 0 sinon | Indicatrice binaire par tableau. Une seule cellule ratée la met à 0. |
+
+:::
+
+Les moyennes publiées sont des **moyennes par fichier** (`dropna().mean()`), ce qui
+surpondère les petits tableaux : un tableau de 4 cellules pèse autant qu'un de 726
+([effet mesuré](resultats.qmd#effet-taille)). Une cinquième mesure est
+imprimée par SIREN et non par tableau, `table_count_accuracy` : la part des SIREN où le
+moteur détecte exactement autant de tableaux que la référence.
+
+::: {.callout-warning appearance="simple"}
+## `--cell-delta` ne fait pas ce qu'il annonce
+
+L'aide annonce une « tolérance en colonnes (±) pour `numeric_recovery` et
+`total_extraction` ». En réalité `cell_delta` n'est passé qu'à `_cell_recovered`, utilisé
+seulement pour `total_extraction` ; la boucle de `numeric_recovery` compare sans tolérance.
+Soit l'aide est fausse, soit l'implémentation l'est.
+:::
+
+## Classer chaque cellule, pour le diagnostic {#classement}
+
+Les quatre métriques disent *combien* de cellules sont perdues, pas *pourquoi*. Le
+diagnostic publié sur ce site ajoute donc une classification par cellule
+(`cell_status`, [`website/build_data.py`](https://github.com/InseeFrLab/extraction-comptes-sociaux-llm/blob/main/website/build_data.py)),
+qui **réutilise les fonctions d'évaluation telles quelles** — le site décrit le pipeline en
+place, pas une réimplémentation qui divergerait.
+
+Six tests, appliqués **dans cet ordre, de la structure vers la lecture**, chaque cellule
+tombant dans la première catégorie qui s'applique :
+
+1. **Dénominateur** — les cellules de la zone de données que `_looks_numeric` reconnaît,
+   cellules vides de l'annotation exclues du décompte : 5 518 chez marker, 5 543 chez
+   chandra.
+2. **Appariement** — sans ligne **et** colonne appariées, on ne sait pas quelle cellule
+   prédite regarder : statut `non-appariee`, **jamais imputé à la lecture**.
+3. **Normalisation** — `_norm_num` ramène à une forme canonique (séparateurs de milliers,
+   décimale, parenthèses comptables, suffixes d'unité, `%`). Égalité → récupérée.
+4. **Test hors position** — la valeur existe-t-elle **ailleurs** dans la grille prédite ? Si
+   oui, la lecture est bonne et c'est le placement qui a échoué (`deplacee`). **C'est ce
+   test qui empêche d'imputer un décalage de colonne à l'OCR.**
+5. **Clé chiffres** — `_digits()` ne garde que les chiffres. Chiffres identiques mais formes
+   différentes → convention d'écriture, pas lecture.
+6. **Distance** — Levenshtein sur les chiffres ≤ 2 → **erreur de lecture**. Au-delà :
+   « valeur franchement différente », trop loin pour conclure.
+
+C'est cette échelle qui produit la [décomposition des cellules
+attendues](resultats.qmd#decomposition-cellules) et le code couleur du
+[comparateur](comparaison.qmd).
+
+::: {.callout-note appearance="simple"}
+## Le piège du signe `%`
+
+`_norm_num` retirait le `%` avec les autres suffixes d'unité **avant** la conversion en
+décimale : `0,7` attendu contre `70%` prédit devenait `0.7` contre `70`, soit deux chiffres
+d'écart, donc une erreur de lecture. Cette seule confusion gonflait le compte de 64 cellules
+marker et 69 chandra, soit **2,1 % au lieu de 1,0 % chez marker et 2,1 % au lieu de 0,9 %
+chez chandra**. Corrigé : le `%` est le seul suffixe à porter une information d'échelle, il
+doit être converti et non supprimé.
+:::
+
+::: {.callout-note appearance="simple"}
+## Le piège du tiret
+
+Même mécanique, autre glyphe : l'annotation écrit `-` là où les moteurs rendent `—`. La
+comparaison portant sur la chaîne brute pour les cellules non numériques, ces cellules
+étaient comptées « texte à la place du nombre » — 14 sur le seul `TAB_552096281_2`. Toutes
+les variantes de tiret sont désormais ramenées au trait d'union avant comparaison
+(`_unify_dashes`), qu'elles marquent une absence, un signe négatif ou un séparateur de
+libellé. Le poste tombe de 16 à 2 cellules chez chandra, et 14 cellules rejoignent les
+récupérées.
+:::
+
+## Ce que la mesure ne dit pas
+
+Quatre réserves, chacune chiffrée ailleurs sur ce site. Elles ne remettent pas en cause le
+classement des moteurs, mais elles bornent l'interprétation de tout écart de quelques points.
+
+- **Un tiers des « cellules numériques » comptées sont vides** — 34,2 % chez marker, 34,1 %
+  chez chandra — et 60 à 65 % d'entre elles sont créditées. La métrique récompense en partie
+  le fait de ne rien écrire
+  ([détail](resultats.qmd#cellules-vides)).
+- **L'appariement par rang compare parfois deux tableaux différents.** Six fichiers ne
+  mesurent pas la qualité du moteur mais un défaut d'appariement
+  ([détail](resultats.qmd#tableaux-decoupes)).
+- **Annotation et moteur écrivent parfois le même tableau autrement** — un intertitre de
+  section collé au libellé d'un côté, sur sa propre ligne de l'autre — sans que l'un ait
+  tort. La mesure compte alors une perte là où rien n'a été perdu
+  ([détail](mise-en-forme.qmd)).
+- **La moyenne par fichier surpondère les petits tableaux**, et la distribution des scores
+  est franchement bimodale : sur une distribution en U, la moyenne mélange deux populations.
+  Préférer la médiane, ou le comptage des tableaux au-dessus d'un seuil
+  ([détail](resultats.qmd#distribution-score)).

@@ -1,80 +1,114 @@
 ---
-title: "Où passent les chiffres"
-subtitle: "Diagnostic de l'extraction des tableaux de comptes sociaux"
+title: "Extraire les tableaux des comptes sociaux"
+subtitle: "Ce que fait le projet, sur quel corpus, et où il en est"
 toc: false
 ---
 
-Neuf valeurs sur dix sont bien lues. Un peu plus d'une sur deux arrive dans la bonne
-cellule. Le problème n'est pas la lecture des caractères, mais l'alignement de la grille.
+Les comptes sociaux déposés par les entreprises et publiés en open data par l'INPI
+contiennent un tableau réglementaire, celui des **filiales et participations**. Ce tableau porte, pour
+chaque société détenue, son capital, ses capitaux propres, la quote-part détenue, la
+valeur des titres, le chiffre d'affaires et le résultat. Ces documents sont des **PDF
+scannés** : l'information n'existe que sous forme d'image.
+
+Le projet automatise le passage de ce scan à un fichier CSV exploitable. Pour cela, plusieurs étapes sont réalisées :
+  - chargement des images scannées (le pdf a été préalablement découpé pour en retenir la page d'intérêt)
+  - extraction des tableaux à l'aide de modèles de vision / multimodaux
+  - mise en forme des tableaux à partir des extractions
+  - évaluation de l'extraction à partir de fichiers d'annotations (1 seul annotateur)
+
+Chaque pdf peut comporter un ou plusieurs tableaux et dispose d'un fichier annoté pour chaque tableau présent dans la page.
+
+::: {.callout-note appearance="simple" collapse="true"}
+## Le problème n'est pas de lire les caractères
+
+Neuf valeurs sur dix sont correctement lues par les deux moteurs. Un peu plus d'une sur
+deux arrive dans la bonne cellule chez marker, quatre sur cinq chez chandra. **L'écart
+entre les deux tient à la grille, pas à l'OCR** — c'est ce qui oriente tout le reste du
+travail.
+:::
+
+## La chaîne de traitement
 
 ```{=html}
-<div class="dx-tiles">
-  <div class="dx-tile">
-    <span class="dx-tile-val" style="color:var(--dx-st-ok-ink)">93&nbsp;%</span>
-    <span class="dx-tile-lab">des valeurs attendues sont présentes quelque part dans
-      l'extraction (marker&nbsp;; 97&nbsp;% pour chandra)</span>
+<div class="dx-flow">
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">1. Extraction</span>
+    <span class="dx-flow-desc">Chaque moteur, par le biais d'une API reçoit le PDF et rend sa lecture de
+      la page. <span class="dx-flow-code">api_marker</span> fait tourner l'OCR neuronal
+      Surya sur GPU puis fait corriger les tableaux par un LLM ;
+      <span class="dx-flow-code">api_chandra</span> envoie chaque page en image à un VLM
+      qui rend directement du HTML.</span>
   </div>
-  <div class="dx-tile">
-    <span class="dx-tile-val">59&nbsp;%</span>
-    <span class="dx-tile-lab">arrivent dans la bonne cellule (marker&nbsp;; 82&nbsp;%
-      pour chandra)</span>
+  <div class="dx-flow-arrow">JSON par document (arbre de blocs (marker) ou HTML par page (chandra))</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">2. Mise en forme</span>
+    <span class="dx-flow-desc">
+      <span class="dx-flow-code">json_to_csv.py</span> transforme cette sortie JSON en une
+      grille de lignes et de colonnes au format CSV (un fichier par tableau) : fusions développées, blocs recollés, grille
+      rectangularisée.</span>
   </div>
-  <div class="dx-tile">
-    <span class="dx-tile-val" style="color:var(--dx-st-manquante-ink)">34&nbsp;pts</span>
-    <span class="dx-tile-lab">d'écart entre les deux chez marker, 15 chez chandra : de la
-      donnée correctement lue, mais mal placée</span>
+  <div class="dx-flow-arrow">un CSV par tableau : <span class="dx-flow-code">{siren}_{n}.csv</span></div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">3. Évaluation</span>
+    <span class="dx-flow-desc">
+      <span class="dx-flow-code">evaluation_extraction.py</span> confronte chaque CSV au
+      tableau annoté à la main (format XLSX) : zones d'en-tête délimitées, libellés et nombres
+      normalisés, lignes et colonnes appariées, cellules comparées.</span>
   </div>
-  <div class="dx-tile">
-    <span class="dx-tile-val">1&nbsp;%</span>
-    <span class="dx-tile-lab">des cellules portent une vraie erreur de lecture de
-      chiffres (57 sur 5&nbsp;518 chez marker, 49 sur 5&nbsp;543 chez chandra)</span>
+  <div class="dx-flow-arrow">quatre métriques par paire — <span class="dx-flow-code">evaluation.parquet</span></div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">4. Diagnostic</span>
+    <span class="dx-flow-desc">Chaque cellule attendue est classée selon ce qui
+      lui est arrivé, ce qui permet de distinguer une erreur de lecture d'un décalage de
+      grille, et de chiffrer ce que corrigerait chaque piste.</span>
   </div>
 </div>
 ```
 
-## Les cinq conclusions
+## Le corpus de référence
 
-- **Le goulot n'est pas l'OCR.** Les erreurs de lecture de chiffres pèsent 1,0 % des
-  cellules chez marker et 0,9 % chez chandra. À l'inverse, plus d'un quart des cellules
-  marker sont perdues faute de ligne ou de colonne appariée.
-- **Le meilleur prédicteur est la hauteur d'en-tête** — mais aucun remède mesuré ne la
-  rattrape. La récupération numérique vaut **65,1 % quand la hauteur détectée concorde
-  entre annotation et prédiction, 48,4 % sinon** (marker) ; 92,4 % contre 69,8 %
-  (chandra). Elle discorde sur 31 tableaux marker sur 72
-  et 18 chandra sur 76. Forcer la bonne hauteur, ou décaler la grille d'autant, ne rend
-  que 0,0 pt chez marker et 1,6 pt chez chandra : sur ces fichiers l'appariement des
-  libellés échoue aussi, et une lecture purement positionnelle plafonnerait à 50,7 %.
-- **Le décalage est le plus souvent global.** Un simple décalage réaligne 90 % du tableau
-  sur la majorité des fichiers concernés — et ce décalage vaut exactement l'erreur de
-  détection de la hauteur d'en-tête.
-- **Une partie de l'écart est hors d'atteinte de la conversion.** Parmi les fichiers
-  concernés, beaucoup ont une source parfaitement régulière : le moteur y a produit une
-  autre structure d'en-tête, en amont.
-- **Une partie de l'écart n'est pas imputable aux moteurs.** Un tiers des « cellules
-  numériques » de `numeric_recovery` sont des cellules vides — 34,2 % chez marker, 34,1 %
-  chez chandra — et l'appariement par rang compare parfois deux tableaux différents : un
-  moteur qui découpe autrement que l'annotation décale toute la suite du SIREN. Les blocs
-  qu'une page chandra sépare sont désormais recollés d'après son balisage (voir [Du JSON au
-  CSV](conversion.qmd)) ; il reste 4 SIREN sur 48 où le compte diffère.
+| Élément | Compte |
+|---|---:|
+| PDF de comptes sociaux scannés (`s3://projet-extraction-tableaux/reprise/`) | 48 |
+| Pages traitées | 55 |
+| Tableaux annotés à la main (`annotations/clean/*.xlsx`) | 77 |
+| Paires annotation / prédiction évaluées | 148 — marker 72, chandra 76 |
 
-## Les quatre pages
+Les annotations sont des XLSX saisis à la main, une feuille par tableau. Elles font
+référence pour tout ce qui suit : aucune mesure de ce site ne compare deux moteurs entre
+eux, toutes comparent un moteur à cette référence.
 
-- [**Du JSON au CSV**](conversion.qmd) — l'étape de conversion qui fige la structure du
-  tableau avant toute mesure.
-- [**Chiffres et cas**](chiffres.qmd) — l'ensemble des mesures : attrition, catégories
-  d'erreur, effet de la taille, cas pathologiques, limites.
-- [**Améliorations**](ameliorations.qmd) — cinq leviers classés par gain mesuré.
-- [**Comparaison des tableaux**](comparaison.qmd) — grille annotée face à grille extraite,
-  cellule par cellule.
+### Un second corpus : les tableaux historiques
 
-## Périmètre
+Le même pipeline a été passé sur 40 **tableaux statistiques historiques** scannés, de 1876
+à 2011, annotés en HTML. Ils diffèrent des comptes sociaux sur trois points : l'entrée est
+une image et non un PDF, la référence est du HTML et non un XLSX, et seul chandra a été
+joué — marker demande un GPU. Le résultat y est nettement plus dur : **92,6 % des valeurs
+attendues sont lues, mais 32,8 % seulement arrivent dans la bonne cellule**, contre 83 % sur
+les comptes sociaux. Le détail est sur la page
+[Résultats — tableaux historiques](resultats-historiques.qmd), les grilles sur
+[Comparaison — tableaux historiques](comparaison-historiques.qmd).
 
-- Corpus `s3://projet-extraction-tableaux/reprise/` : **48 PDF** scannés, **76 tableaux**
-  annotés à la main.
-- **148 paires** annotation/prédiction évaluées : marker 72, chandra 76.
-- Les fonctions d'évaluation du dépôt — `detect_column_header_height`, `_match_headers`,
-  `_normalize_numeric_str` — sont réutilisées telles quelles : le diagnostic décrit le
-  pipeline en place, pas une réimplémentation.
+
+## Les pages du site
+
+- [**Architecture**](architecture.qmd) : les deux moteurs, les services qui les servent,
+  et de vrais exemples de leur sortie sur le même PDF.
+- [**Du JSON au CSV**](conversion.qmd) : les six étapes qui transforment la sortie d'un
+  moteur en grille de lignes et de colonnes.
+- [**Évaluation**](evaluation.qmd) : comment une paire est constituée, ce qui est
+  normalisé, comment lignes et colonnes sont appariées, et ce que valent les quatre
+  métriques.
+- [**Résultats**](resultats.qmd) : l'ensemble des mesures sur les comptes sociaux :
+  attrition, catégories d'erreur, effet de la taille, cas pathologiques, limites.
+- [**Résultats — tableaux historiques**](resultats-historiques.qmd) : les mêmes mesures sur
+  le second corpus, et les deux causes d'échec qui lui sont propres.
+- [**Problèmes de mise en forme**](mise-en-forme.qmd) : quand l'annotation et le moteur
+  écrivent le même tableau autrement, et que la mesure compte une perte à tort.
+- [**Améliorations**](ameliorations.qmd) : cinq leviers classés par gain mesuré.
+- [**Comparaison des tableaux**](comparaison.qmd) : grille annotée face à grille
+  extraite, cellule par cellule, sur les 148 paires des comptes sociaux — et
+  [sur les 38 paires](comparaison-historiques.qmd) des tableaux historiques.
 
 ::: {.callout-note appearance="simple"}
 ## Données affichées

@@ -1,0 +1,60 @@
+<!-- Contrôles, conteneur et légende du comparateur de grilles, communs aux deux corpus.
+Chaque page hôte pose window.DX_SOURCE puis charge comparateur.js. -->
+
+::: {.dx-controls .column-screen-inset}
+::: {.dx-control}
+[Tableau]{}
+```{=html}
+<select id="dx-table" aria-label="Choisir le tableau"></select>
+```
+:::
+::: {.dx-control}
+[Moteur]{}
+```{=html}
+<select id="dx-method" aria-label="Choisir le moteur d'extraction"></select>
+```
+:::
+::: {.dx-control}
+[Disposition]{}
+```{=html}
+<select id="dx-layout" aria-label="Choisir la disposition">
+  <option value="side">Côte à côte</option>
+  <option value="stack">L'une sous l'autre</option>
+</select>
+```
+:::
+::: {.dx-control}
+[Filtre]{}
+```{=html}
+<select id="dx-filter" aria-label="Filtrer les tableaux">
+  <option value="all">Tous les tableaux</option>
+  <option value="bad">Récupération &lt; 50 %</option>
+  <option value="zero">Récupération nulle</option>
+  <option value="hdr">Hauteur d'en-tête discordante</option>
+  <option value="perfect">Récupération 100 %</option>
+</select>
+```
+:::
+:::
+
+::: {.column-screen-inset}
+```{=html}
+<div id="dx-app" aria-live="polite"></div>
+```
+:::
+
+::: {.dx-status-legend .column-screen-inset}
+[**Zone de données**]{.dx-legend-head}
+[[]{.dx-chip style="background:var(--dx-st-ok-bg)"} Valeur correcte]{}
+[[]{.dx-chip style="background:var(--dx-st-format-bg)"} Mêmes chiffres, format différent]{}
+[[]{.dx-chip style="background:var(--dx-st-ocr-bg)"} Erreur de lecture de chiffres]{}
+[[]{.dx-chip style="background:var(--dx-st-deplacee-bg)"} Valeur extraite mais ailleurs]{}
+[[]{.dx-chip style="background:var(--dx-st-manquante-bg)"} Cellule vide, valeur perdue]{}
+[[]{.dx-chip style="background:var(--dx-st-differente-bg)"} Valeur franchement différente]{}
+[[]{.dx-chip style="background:var(--dx-st-nonapp-bg)"} Ligne ou colonne non appariée]{}
+
+[**En-têtes de la grille annotée**]{.dx-legend-head}
+[[]{.dx-chip style="background:var(--dx-st-ok-bg);border-color:var(--dx-st-ok-ink)"} Libellé apparié]{}
+[[]{.dx-chip style="background:var(--dx-st-manquante-bg);border-color:var(--dx-st-manquante-ink)"} Libellé non apparié]{}
+[[]{.dx-chip style="background:var(--dx-surface-2);border-color:var(--dx-rule)"} Zone d'en-tête détectée]{}
+:::

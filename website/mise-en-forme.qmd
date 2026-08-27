@@ -1,0 +1,393 @@
+---
+title: "Problèmes de mise en forme"
+subtitle: "Quand l'annotation et le moteur écrivent le même tableau autrement"
+---
+
+Dans l'extraction automatique de tableaux, les erreurs d'extraction peuvent provenir de deux sources : 
+**l'erreur de lecture du pdf** et **l'erreur de mise en forme du tableau**. 
+La mise en forme du tableau (par exemple *où s'arrête une ligne*, *qu'est-ce qu'une colonne*) peut varier entre l'annotateur et le
+moteur, sans que l'un ou l'autre soit véritablement en erreur. L'évaluation compte alors une
+perte là où rien n'a été perdu.
+
+Cette page comprend différents exemples de problèmes spécifiques de mise en page.
+
+## Premier cas : les intertitres de section
+
+### Ce qu'imprime le PDF
+
+Le tableau des filiales range ses lignes par section : *filiales à plus de 50 %*, *filiales
+françaises*, *filiales étrangères*, *participations*. Ces intertitres ne sont **pas** des lignes
+du tableau : le filet horizontal ne passe pas sous eux. « 1. FILIALES (PLUS DE 50%) »,
+« FILIALES FRANÇAISES » et « S.A. CIE FI. CITEAUX » partagent une seule cellule encadrée,
+et les montants de Citeaux sont alignés sur la troisième ligne de texte.
+
+```{=html}
+<div class="dx-pane">
+  <div class="dx-pane-head">
+    <div class="dx-pane-title">Le filetage du PDF</div>
+    <div class="dx-pane-dims">exemple — TAB_300221017.pdf, page 1</div>
+  </div>
+  <div class="dx-grid-scroll">
+    <table class="dx-grid dx-src">
+      <thead>
+        <tr>
+          <td class="dx-src-corner" rowspan="2">
+            <span class="dx-src-corner-top">INFORMATIONS FINANCIÈRES</span>
+            <span class="dx-src-corner-bottom">FILIALES ET PARTICIPATIONS</span>
+          </td>
+          <td class="dx-hdr" rowspan="2">CAPITAL</td>
+          <td class="dx-hdr" rowspan="2">CAPITAUX PROPRES AVANT RÉSULTAT</td>
+          <td class="dx-hdr" rowspan="2">QUOTE-PART DU CAPITAL DÉTENUE (EN %)</td>
+          <td class="dx-hdr" colspan="2">VALEUR COMPTABLE DES TITRES DÉTENUS</td>
+          <td class="dx-hdr dx-src-more" rowspan="2">…</td>
+        </tr>
+        <tr>
+          <td class="dx-hdr">BRUTE</td>
+          <td class="dx-hdr">NETTE</td>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <span class="dx-src-inter">1. FILIALES (PLUS DE 50%)</span>
+            <span class="dx-src-inter">FILIALES FRANÇAISES</span>
+            <span class="dx-src-name">S.A. CIE FI. CITEAUX</span>
+          </td>
+          <td class="dx-src-bottom">1.118</td>
+          <td class="dx-src-bottom">31.102</td>
+          <td class="dx-src-bottom">98,15%</td>
+          <td class="dx-src-bottom">14.482</td>
+          <td class="dx-src-bottom">14.482</td>
+          <td class="dx-src-more"></td>
+        </tr>
+        <tr>
+          <td><span class="dx-src-name">S.A. HENRI MAIRE</span></td>
+          <td>20.122</td><td>10.066</td><td>94,77%</td><td>19.817</td><td>19.817</td>
+          <td class="dx-src-more"></td>
+        </tr>
+        <tr class="dx-src-gap">
+          <td colspan="7">30 lignes de filiales françaises</td>
+        </tr>
+        <tr>
+          <td>
+            <span class="dx-src-inter">FILIALES ÉTRANGÈRES</span>
+            <span class="dx-src-name">J.C. BOISSET WINES U.S.A. INC. (SAN FRANCISCO U.S.A.)</span>
+          </td>
+          <td class="dx-src-bottom">USD 4.630</td>
+          <td class="dx-src-bottom">USD 21.485</td>
+          <td class="dx-src-bottom">100,00%</td>
+          <td class="dx-src-bottom">€ 4.139</td>
+          <td class="dx-src-bottom">€ 4.139</td>
+          <td class="dx-src-more"></td>
+        </tr>
+        <tr class="dx-src-gap">
+          <td colspan="7">2 lignes de filiales étrangères</td>
+        </tr>
+        <tr>
+          <td>
+            <span class="dx-src-inter">2. PARTICIPATIONS (10% À 50%)</span>
+            <span class="dx-src-name">S.A.S. LES CAVES DE LA MUYRE</span>
+          </td>
+          <td class="dx-src-bottom">15</td>
+          <td class="dx-src-bottom">15</td>
+          <td class="dx-src-bottom">46,00%</td>
+          <td class="dx-src-bottom">7</td>
+          <td class="dx-src-bottom">7</td>
+          <td class="dx-src-more"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+```
+
+Deux détails de cet exemple comptent pour la suite : 
+
+  - **la cellule d'angle est barrée d'une diagonale** : un seul emplacement, deux légendes  
+  - **la colonne `…` masque 5 colonnes** (prêts et avances, cautions et avals, chiffre d'affaires, résultat, dividendes), reprises
+telles quelles dans les deux grilles ci-dessous.
+
+### L'annotation vs l'extraction Chandra
+
+L'annotation suit le formatage de la page : l'intertitre reste dans la même cellule que le libellé, collé devant
+la raison sociale. 
+Chandra suit le sens : il en fait une ligne à lui, correctement balisée
+`<td colspan="12">`. 
+
+**Aucune des deux n'est fausse, et la seconde est la plus utile.**
+
+```{=html}
+<div class="dx-panes dx-side-by-side">
+  <div class="dx-pane">
+    <div class="dx-pane-head">
+      <div class="dx-pane-title">Annotation</div>
+      <div class="dx-pane-dims">39 × 11</div>
+    </div>
+    <div class="dx-grid-scroll">
+      <table class="dx-grid">
+        <thead>
+          <tr>
+            <th class="dx-idx dx-corner"></th>
+            <th class="dx-idx">0</th><th class="dx-idx">1</th><th class="dx-idx">2</th>
+            <th class="dx-idx">3</th><th class="dx-idx">4</th><th class="dx-idx">5</th>
+            <th class="dx-idx">…</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th class="dx-idx dx-idx-no">0</th>
+            <td class="dx-hdr dx-hm-no">Informations financières</td>
+            <td class="dx-hdr">Capital</td><td class="dx-hdr">Capitaux propres avant résultat</td>
+            <td class="dx-hdr">Quote part du capital détenue (en %)</td>
+            <td class="dx-hdr">Valeur comptable des titres détenus</td>
+            <td class="dx-hdr"></td><td class="dx-hdr">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">1</th>
+            <td class="dx-hdr dx-hm-ok">Filiales et Participations</td>
+            <td class="dx-hdr"></td><td class="dx-hdr"></td><td class="dx-hdr"></td>
+            <td class="dx-hdr">Brute</td><td class="dx-hdr">Nette</td><td class="dx-hdr">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-no">2</th>
+            <td class="dx-hm-no"><span class="dx-src-glued">1. Filiales (plus de 50%) Filiales Françaises</span> S.A. Cie FI. Citeaux</td>
+            <td class="dx-st-manquante">1.118</td><td class="dx-st-manquante">31.102</td>
+            <td class="dx-st-manquante">0.9815</td><td class="dx-st-manquante">14.482</td>
+            <td class="dx-st-manquante">14.482</td><td class="dx-st-manquante">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">3</th>
+            <td class="dx-hm-ok">S.A Henri Maire</td>
+            <td class="dx-st-ok">20.122</td><td class="dx-st-ok">10.066</td>
+            <td class="dx-st-ok">94,77%</td><td class="dx-st-ok">19.817</td>
+            <td class="dx-st-ok">19.817</td><td class="dx-st-ok">…</td>
+          </tr>
+          <tr class="dx-src-gap"><td colspan="8">lignes 4 à 32 — appariées, valeurs récupérées</td></tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">33</th>
+            <td class="dx-hm-ok"><span class="dx-src-glued">Filiales étrangères</span> J.C Boisset Wines U.S.A Inc. (San Francisco U.S.A)</td>
+            <td class="dx-st-ok">USD 4.630</td><td class="dx-st-ok">USD 21.485</td>
+            <td class="dx-st-ok">100,00%</td><td class="dx-st-ok">€ 4.139</td>
+            <td class="dx-st-ok">€ 4.139</td><td class="dx-st-ok">…</td>
+          </tr>
+          <tr class="dx-src-gap"><td colspan="8">lignes 34 et 35 — appariées</td></tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">36</th>
+            <td class="dx-hm-ok"><span class="dx-src-glued">2. Participations (10% à 50%)</span> S.A.S Les caves de la Muyre</td>
+            <td class="dx-st-manquante">15</td><td class="dx-st-manquante">15</td>
+            <td class="dx-st-manquante">46,00%</td><td class="dx-st-manquante">7</td>
+            <td class="dx-st-manquante">7</td><td class="dx-st-manquante">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">37</th>
+            <td class="dx-hm-ok">S.C.E.V. Domaine Louis Violland</td>
+            <td class="dx-st-ok">3.726</td><td class="dx-st-ok">8.419</td>
+            <td class="dx-st-ok">26,01%</td><td class="dx-st-ok">229</td>
+            <td class="dx-st-ok">229</td><td class="dx-st-ok">…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="dx-pane">
+    <div class="dx-pane-head">
+      <div class="dx-pane-title">chandra</div>
+      <div class="dx-pane-dims">43 × 12</div>
+    </div>
+    <div class="dx-grid-scroll">
+      <table class="dx-grid">
+        <thead>
+          <tr>
+            <th class="dx-idx dx-corner"></th>
+            <th class="dx-idx">0</th><th class="dx-idx">1</th><th class="dx-idx">2</th>
+            <th class="dx-idx">3</th><th class="dx-idx">4</th><th class="dx-idx">5</th>
+            <th class="dx-idx">6</th><th class="dx-idx">…</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th class="dx-idx dx-idx-ok">0</th>
+            <td class="dx-hdr dx-hm-no">FILIALES ET PARTICIPATIONS</td>
+            <td class="dx-hdr dx-hm-no">INFORMATIONS FINANCIÈRES</td>
+            <td class="dx-hdr">CAPITAL</td><td class="dx-hdr">CAPITAUX PROPRES AVANT RÉSULTAT</td>
+            <td class="dx-hdr">QUOTE-PART DU CAPITAL DÉTENUE (EN %)</td>
+            <td class="dx-hdr">VALEUR COMPTABLE DES TITRES DÉTENUS</td>
+            <td class="dx-hdr"></td><td class="dx-hdr">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx">1</th>
+            <td class="dx-hdr"></td><td class="dx-hdr"></td><td class="dx-hdr"></td>
+            <td class="dx-hdr"></td><td class="dx-hdr"></td>
+            <td class="dx-hdr">BRUTE</td><td class="dx-hdr">NETTE</td><td class="dx-hdr">…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx">2</th>
+            <td class="dx-sect" colspan="8">1. FILIALES (PLUS DE 50%)</td>
+          </tr>
+          <tr>
+            <th class="dx-idx">3</th>
+            <td class="dx-sect" colspan="8">FILIALES FRANÇAISES</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-no">4</th>
+            <td class="dx-hm-no">S.A. CIE FI. CITEAUX</td>
+            <td class="dx-st-nonappariee"></td>
+            <td>1.118</td><td>31.102</td><td>98,15%</td><td>14.482</td><td>14.482</td><td>…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">5</th>
+            <td class="dx-hm-ok">S.A. HENRI MAIRE</td>
+            <td class="dx-st-nonappariee"></td>
+            <td>20.122</td><td>10.066</td><td>94,77%</td><td>19.817</td><td>19.817</td><td>…</td>
+          </tr>
+          <tr class="dx-src-gap"><td colspan="9">lignes 6 à 34</td></tr>
+          <tr>
+            <th class="dx-idx">35</th>
+            <td class="dx-sect" colspan="8">FILIALES ÉTRANGÈRES</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">36</th>
+            <td class="dx-hm-ok">J.C. BOISSET WINES U.S.A. INC. (SAN FRANCISCO U.S.A.)</td>
+            <td class="dx-st-nonappariee"></td>
+            <td>USD 4.630</td><td>USD 21.485</td><td>100,00%</td><td>€ 4.139</td>
+            <td>€ 4.139</td><td>…</td>
+          </tr>
+          <tr class="dx-src-gap"><td colspan="9">lignes 37 et 38</td></tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">39</th>
+            <td class="dx-sect dx-hm-ok" colspan="8">2. PARTICIPATIONS (10% À 50%)</td>
+          </tr>
+          <tr>
+            <th class="dx-idx">40</th>
+            <td>S.A.S. LES CAVES DE LA MUYRE</td>
+            <td class="dx-st-nonappariee"></td>
+            <td>15</td><td>15</td><td>46,00%</td><td>7</td><td>7</td><td>…</td>
+          </tr>
+          <tr>
+            <th class="dx-idx dx-idx-ok">41</th>
+            <td class="dx-hm-ok">S.C.E.V. DOMAINE LOUIS VIOLLAND</td>
+            <td class="dx-st-nonappariee"></td>
+            <td>3.726</td><td>8.419</td><td>26,01%</td><td>229</td><td>229</td><td>…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+```
+
+::: {.dx-status-legend}
+[[]{.dx-chip style="background:var(--dx-st-ok-bg);border-color:var(--dx-st-ok-ink)"} Libellé apparié]{}
+[[]{.dx-chip style="background:var(--dx-st-manquante-bg);border-color:var(--dx-st-manquante-ink)"} Libellé non apparié]{}
+[[]{.dx-chip style="background:var(--dx-surface-2);border-color:var(--dx-rule)"} Zone d'en-tête détectée]{}
+[[]{.dx-chip style="background:var(--dx-st-nonapp-bg)"} Colonne jamais appariée]{}
+[[]{.dx-chip style="background:var(--dx-st-manquante-bg)"} Valeur comptée perdue]{}
+
+Les colonnes 6 à 10 de l'annotation et 7 à 11 de chandra sont repliées sous `…` : prêts et
+avances, cautions et avals, chiffre d'affaires, résultat, dividendes. Les indices de
+gouttière sont ceux des fichiers réels, vérifiables ligne à ligne.
+:::
+
+### Ce que l'appariement en fait
+
+L'appariement des lignes compare les libellés par distance de Levenshtein normalisée
+(`_normalize_label` + `_lev_similarity`), puis retient les paires au-dessus de 0,5. Sur les
+37 lignes de données, 35 s'apparient sans encombre. Les deux qui portent un intertitre
+collé se comportent chacune mal, et différemment :
+
+::: {.dx-scroll}
+
+| Libellé annoté | Meilleure candidate chandra | Similarité | Issue |
+|---|---|---:|---|
+| `1. Filiales (plus de 50%) Filiales Françaises S.A. Cie FI. Citeaux` | `S.A. CIE FI. CITEAUX` | 0,30 | Sous le seuil : **aucun** appariement, 10 valeurs comptées perdues |
+| `2. Participations (10% à 50%) S.A.S Les caves de la Muyre` | `2. PARTICIPATIONS (10% À 50%)` — la ligne d'**intertitre** | 0,509 | Au-dessus du seuil : appariée à une ligne vide, 8 valeurs comptées perdues |
+| `Filiales étrangères J.C Boisset Wines U.S.A Inc. (San Francisco U.S.A)` | `J.C. BOISSET WINES U.S.A. INC. (SAN FRANCISCO U.S.A.)` | 0,67 | Passe : l'intertitre est court face à une longue raison sociale |
+
+:::
+
+Le deuxième cas est le pire des trois : ce n'est pas un appariement manqué, c'est un
+**appariement faux**. Le libellé collé ressemble davantage à l'intertitre de chandra qu'à la
+ligne de données qui le suit, à 0,009 point du seuil. Les 8 valeurs de la ligne existent,
+sont justes, et sont pointées vers une ligne vide.
+
+Le troisième montre que le problème n'est pas systématique mais **arbitraire** : il ne se
+déclenche que si l'intertitre est long par rapport à la raison sociale qui le suit. La note
+d'un fichier dépend de la longueur relative de deux chaînes de caractères.
+
+### Le décompte
+
+::: {.dx-scroll}
+
+| Cellules manquées | Nombre | Cause |
+|---|---:|---|
+| Ligne `S.A. Cie FI. Citeaux` | 10 | Convention d'écriture des intertitres |
+| Ligne `Les caves de la Muyre` | 8 | Convention d'écriture des intertitres |
+| `6 901` contre `6.901` | 1 | `_normalize_numeric_str` unifie l'espace séparateur de milliers, pas le point — celui-ci est ambigu, milliers ou décimale ([pourquoi](evaluation.qmd#normalisation)) |
+| ~~`100%` contre `100,00%`~~ | ~~1~~ | **Corrigé.** Les deux écritures sont désormais ramenées à la même forme : la comparaison n'a plus qu'un seul chemin |
+| **Total** | **19** | |
+
+:::
+
+**Les 19 cellules manquées tiennent toutes à une différence d'écriture, pas à une erreur
+d'extraction.** L'extraction chandra de ce tableau est juste.
+
+## Le second cas : la cellule barrée d'une diagonale
+
+Repartons du même exemple. La cellule d'angle du PDF est un seul
+emplacement barré d'une diagonale, portant deux légendes : « INFORMATIONS FINANCIÈRES » en
+haut à droite, « FILIALES ET PARTICIPATIONS » en bas à gauche.
+
+- **L'annotation** en fait une colonne et deux lignes d'en-tête : cela donne au total 11 colonnes.
+- **Chandra** en fait **deux colonnes** et une ligne d'en-tête, dont la seconde colonne reste
+  vide sur les 41 lignes : cela donne au total 12 colonnes.
+
+La colonne supplémentaire ne coûte rien en soi : `col_recovery` est un rappel sur les colonnes
+de l'annotation, et l'appariement par libellé réaligne les 10 colonnes de chiffres malgré le
+décalage. Ce qui coûte, c'est que la colonne de libellés de l'annotation ne trouve plus son
+équivalent :
+
+::: {.dx-scroll}
+
+| Comparaison | Similarité | Effet |
+|---|---:|---|
+| `Informations financières \| Filiales et Participations` (*annotation*) contre `FILIALES ET PARTICIPATIONS \| 1. FILIALES (PLUS DE 50%) \| FILIALES FRANÇAISES` (*chandra*) | 0,30 | Non apparié |
+| la même, si l'en-tête de chandra était détecté sur 2 lignes et non 4 | 0,491 | Non apparié — **à 0,009 du seuil** |
+| `Informations financières \| Filiales et Participations` contre `INFORMATIONS FINANCIÈRES` | 0,453 | Non apparié |
+
+:::
+
+Coût final : **1 colonne sur 11 et 1 ligne sur 39** — la ligne `Informations financières`,
+que chandra a placée en en-tête de colonne et non en ligne. Aucune valeur numérique, mais
+`total_extraction` tombe à 0 : la structure n'est pas complète.
+
+## Ampleur sur le corpus
+
+Les intertitres ne sont pas spécifiques à ce fichier. Les conventions coexistent
+**dans les deux sens**, il n'y a pas de côté à corriger (*annotation* ou *chandra*).
+
+::: {.dx-scroll}
+
+| | chandra | marker |
+|---|---:|---:|
+| Paires évaluées | 76 | 72 |
+| Annotations portant au moins une ligne d'intertitre | 42 | 41 |
+| Prédictions portant au moins une ligne d'intertitre | 40 | 41 |
+| Le moteur dégroupe, l'annotation colle | 10 | 21 |
+| L'annotation dégroupe, le moteur colle (cas miroir) | 9 | 11 |
+
+: Une ligne d'intertitre est ici une ligne dont la seule cellule non vide est dans la zone des libellés.
+
+:::
+
+## À rapprocher des autres pages
+
+- La **cellule vide créditée** est un biais voisin, de plus grande ampleur : un tiers des
+  cellules comptées dans `numeric_recovery` sont vides, et 60 à 65 % d'entre elles sont
+  créditées ([détail](resultats.qmd#cellules-vides)).
+  Le corriger est une redéfinition de métrique, pas un retrait de biais : traité à part.
+- L'**appariement par rang** produit le même genre d'artefact à l'échelle du tableau entier :
+  `TAB_300221017_1` est comparé à un CSV marker de 3 lignes contre 39 annotées
+  ([détail](resultats.qmd#tableaux-decoupes)).
+- La **conversion** est l'étape qui fige la structure avant toute mesure, `colspan` et
+  `rowspan` compris ([détail](conversion.qmd)).
