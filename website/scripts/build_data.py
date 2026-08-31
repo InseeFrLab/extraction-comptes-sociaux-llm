@@ -10,8 +10,8 @@ tableaux proviennent de comptes sociaux déposés et publiés en open data par l
 le site montre donc exactement ce que le pipeline a lu, sans transformation.
 
 Usage :
-    uv run --project website python website/build_data.py
-    uv run --project website python website/build_data.py --limit 5   # itération rapide
+    uv run --project website python website/scripts/build_data.py
+    uv run --project website python website/scripts/build_data.py --limit 5   # itération rapide
 """
 
 from __future__ import annotations
@@ -29,21 +29,27 @@ import pandas as pd
 
 # Les fonctions d'évaluation sont réutilisées telles quelles : le site doit décrire
 # le pipeline en place, pas une réimplémentation qui divergerait silencieusement.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+# `scripts/` est à la racine du dépôt, deux niveaux au-dessus de ce fichier.
+RACINE_SITE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RACINE_SITE.parent / "scripts"))
 
-import evaluation_extraction as E  # noqa: E402
+import evaluation as E  # noqa: E402
 from extraction_common.s3 import get_s3_fs  # noqa: E402
 
-BUCKET = "projet-extraction-tableaux"
-S3_ANNOTATIONS = f"{BUCKET}/annotations/clean"
-S3_APERCUS = f"{BUCKET}/reprise/apercus"
-METHODS: dict[str, str] = {
-    "marker": f"{BUCKET}/reprise/output_csv/marker",
-    "chandra": f"{BUCKET}/reprise/output_csv/chandra",
-}
-OUT_PATH = Path(__file__).parent / "data" / "comparaisons.json"
+import config  # noqa: E402
 
-MATCH_THRESHOLD = 0.5
+CONFIG = config.charger("comptes-sociaux")
+
+S3_ANNOTATIONS = CONFIG.annotations
+S3_APERCUS = CONFIG.site["apercus"]["prefixe"]
+# Le site ne publie que les moteurs marqués `publie` : `scripts/evaluation.py` en mesure
+# d'autres — moteurs écartés, conditions d'expérience — qui ne sont pas d'autres modèles.
+METHODS: dict[str, str] = CONFIG.publies()
+# Les données rendues sont lues par le site depuis sa racine, pas depuis ce dossier.
+OUT_PATH = RACINE_SITE / CONFIG.site["donnees"]
+
+# Le même seuil d'appariement que la mesure : le site doit montrer ce qu'elle a compté.
+MATCH_THRESHOLD = CONFIG.evaluation["seuil_similarite"]
 
 
 # ── Chargement ────────────────────────────────────────────────────────────────
@@ -167,12 +173,16 @@ def build_grid(df: pd.DataFrame) -> list[list[str]]:
     return [[str(df.iloc[r, c]) for c in range(len(df.columns))] for r in range(len(df))]
 
 
-def compare_pair(ann: pd.DataFrame, pred: pd.DataFrame) -> dict | None:
+def compare_pair(
+    ann: pd.DataFrame, pred: pd.DataFrame, threshold: float = MATCH_THRESHOLD
+) -> dict | None:
     """Compare une annotation et une prédiction, cellule par cellule.
 
     Args:
         ann: grille annotée de référence.
         pred: grille prédite.
+        threshold: similarité minimale pour apparier deux en-têtes ; celle du corpus des
+            comptes sociaux par défaut, l'autre corpus passant la sienne.
 
     Returns:
         Dict décrivant les deux grilles, l'appariement et le statut de chaque
@@ -189,12 +199,12 @@ def compare_pair(ann: pd.DataFrame, pred: pd.DataFrame) -> dict | None:
     col_match = E._match_headers(
         E._build_header_texts(ann, "col", ann_hrows, ann_hcols),
         E._build_header_texts(pred, "col", pred_hrows, pred_hcols),
-        MATCH_THRESHOLD,
+        threshold,
     )
     row_match = E._match_headers(
         E._build_header_texts(ann, "row", ann_hrows, ann_hcols),
         E._build_header_texts(pred, "row", pred_hrows, pred_hcols),
-        MATCH_THRESHOLD,
+        threshold,
     )
 
     pred_values = {_norm_num(v) for v in pred.values.ravel()}
@@ -238,7 +248,7 @@ def compare_pair(ann: pd.DataFrame, pred: pd.DataFrame) -> dict | None:
 
 # ── Aperçus des documents sources ─────────────────────────────────────────────
 
-APERCUS_RACINE = Path(__file__).parent / "data" / "apercus"
+APERCUS_RACINE = RACINE_SITE / "data" / "apercus"
 
 # Un identifiant de document peut porter espaces et parenthèses — `_2511_431980275_TAB_F164
 # - Tableau des filiales et participations 31122022 (002)`. Le nom S3 les garde, pour rester
@@ -261,8 +271,9 @@ def _slug(nom: str) -> str:
 def telecharger_apercus(fs, prefix: str, dossier: str, cle_de_stem) -> dict[str, list[str]]:
     """Rapatrie les aperçus S3 dans `data/apercus/{dossier}` et les indexe par document.
 
-    Les aperçus sont fabriqués une fois par `scripts/apercus.py` et déposés sur S3 : les
-    reconstruire ici ferait retélécharger plusieurs gigaoctets de sources à chaque build.
+    Les aperçus sont fabriqués une fois par `apercus.py`, à côté de ce fichier, et déposés
+    sur S3 : les reconstruire ici ferait retélécharger plusieurs gigaoctets de sources à
+    chaque build.
 
     Args:
         fs: système de fichiers S3.
@@ -394,7 +405,7 @@ def build(limit: int | None = None) -> dict:
 
     payload = {
         "meta": {
-            "source": f"s3://{BUCKET}/reprise/",
+            "source": f"s3://{CONFIG.site['racine']}",
             "methods": list(METHODS),
             "nTables": len(tables),
             "matchThreshold": MATCH_THRESHOLD,

@@ -1,50 +1,51 @@
 project:
   type: website
   output-dir: _site
-  # Les JSON de comparaison sont produits par build_data*.py et ne sont pas versionnés :
-  # ils doivent être copiés tels quels dans le site rendu. Le comparateur les lit à la
-  # volée, et il est partagé par les deux pages « Comparaison ».
+  # Les JSON de comparaison sont produits par scripts/build_data*.py et ne sont pas
+  # versionnés : ils doivent être copiés tels quels dans le site rendu. Le comparateur les
+  # lit à la volée, et il est partagé par les deux pages « Comparaison ».
   resources:
     - data/comparaisons.json
     - data/comparaisons-historiques.json
-    # Aperçus des documents sources, rapatriés de S3 par build_data*.py. Le comparateur
-    # ne les charge qu'à l'ouverture du volet : ils pèsent une trentaine de mégaoctets.
+    # Aperçus des documents sources, rapatriés de S3 par scripts/build_data*.py. Le
+    # comparateur ne les charge qu'à l'ouverture du volet : ils pèsent une trentaine de
+    # mégaoctets.
     - data/apercus
-    - comparateur.js
+    - js/comparateur.js
 
 website:
   title: "Extraction des comptes sociaux"
   description: >
     Extraire les tableaux de filiales et participations de comptes sociaux scannés :
     architecture des moteurs, mise en forme, évaluation, et où se perdent les valeurs.
-  favicon: favicon.svg
+  favicon: icons/favicon.svg
   navbar:
-    logo: favicon.svg
+    logo: icons/favicon.svg
     left:
       - href: index.qmd
         text: Introduction
-      - href: architecture.qmd
+      - href: pages/architecture.qmd
         text: Architecture
-      - href: conversion.qmd
+      - href: pages/conversion.qmd
         text: JSON → CSV
-      - href: mise-en-forme.qmd
+      - href: pages/mise-en-forme.qmd
         text: Mise en forme
-      - href: evaluation.qmd
+      - href: pages/evaluation.qmd
         text: Évaluation
       # Deux corpus, mêmes pages : le menu évite de doubler la barre de navigation.
       - text: Résultats
         menu:
-          - href: resultats.qmd
+          - href: pages/resultats.qmd
             text: Comptes sociaux
-          - href: resultats-historiques.qmd
+          - href: pages/resultats-historiques.qmd
             text: Tableaux historiques
-      - href: ameliorations.qmd
+      - href: pages/ameliorations.qmd
         text: Améliorations
       - text: Comparaison
         menu:
-          - href: comparaison.qmd
+          - href: pages/comparaison.qmd
             text: Comptes sociaux
-          - href: comparaison-historiques.qmd
+          - href: pages/comparaison-historiques.qmd
             text: Tableaux historiques
     right:
       - icon: github
@@ -60,8 +61,8 @@ website:
 format:
   html:
     theme:
-      light: [cosmo, styles.scss]
-      dark: [cosmo, styles.scss, styles-dark.scss]
+      light: [cosmo, styles/styles.scss]
+      dark: [cosmo, styles/styles.scss, styles/styles-dark.scss]
     toc: true
     toc-title: Sur cette page
     toc-depth: 3

@@ -440,9 +440,9 @@ uv run --project scripts scripts/extraction_historiques.py --all
 uv run --project scripts scripts/json_to_csv.py --method chandra_historiques --overwrite
 
 # 3. Métriques
-uv run --project scripts scripts/evaluation_historiques.py
+uv run --project scripts scripts/evaluation.py --corpus historiques
 
 # 4. Données du site, puis tous les chiffres de cette page
-uv run --project website python website/build_data_historiques.py
-uv run --project scripts scripts/chiffres_site_historiques.py
+uv run --project website python website/scripts/build_data_historiques.py
+uv run --project website python website/scripts/chiffres_site.py --corpus historiques
 ```

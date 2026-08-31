@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
 """
-Pipeline d'évaluation pour l'extraction de tableaux depuis images.
+Évaluation de l'extraction de tableaux, commune aux deux corpus.
 
-Compare les tableaux prédits (CSV) produits par Marker et OpenDataLoader
-avec les annotations de référence (XLSX).
+Compare les tableaux prédits (CSV) aux annotations de référence et dépose les métriques en
+parquet sur S3. Le calcul est **le même pour tous les corpus** — mêmes fonctions, mêmes
+seuils : seules changent la référence et la façon de l'apparier à une prédiction.
 
-Sources CSV :
-  s3://projet-extraction-tableaux/reprise/output_csv/marker/
-  s3://projet-extraction-tableaux/reprise/output_csv/opendataloader/
-  s3://projet-extraction-tableaux/reprise/output_csv/chandra/
-Annotations :
-  s3://projet-extraction-tableaux/annotations/clean/
-Résultats :
-  s3://projet-extraction-tableaux/reprise/eval/evaluation.parquet
+Chemins, moteurs mesurés et seuils viennent de `config/{corpus}.yaml` ; ce module n'ajoute
+que le code d'appariement propre à chaque corpus, déclaré dans `TRAITEMENTS`.
 
-Métriques (type rappel, une ligne par couple fichier × méthode) :
-  col_recovery      – taux de colonnes de l'annotation retrouvées
-  row_recovery      – taux de lignes de l'annotation retrouvées
-  numeric_recovery  – taux de cellules numériques (hors en-têtes) bien récupérées
-  total_extraction  – 1 si structure complète (toutes colonnes/lignes matchées) et toutes
-                      les cellules numériques de la zone de données sont récupérées
+| Corpus            | Référence                            | Appariement            |
+|-------------------|--------------------------------------|------------------------|
+| `comptes-sociaux` | XLSX, `annotations/clean/`           | par SIREN, rang à rang |
+| `historiques`     | HTML, `annotations/tableaux histo…/` | par nom de fichier     |
 
-Les valeurs sont comparées après normalisation (`_normalize_numeric_str`), qui absorbe les
-écarts d'écriture — espaces séparateurs de milliers, séparateur décimal, signe négatif
-détaché, parenthèses comptables, pourcentages — mais rien d'autre : deux valeurs aux
-chiffres différents restent différentes.
+Métriques (type rappel, une ligne par couple fichier × méthode) : `col_recovery`,
+`row_recovery`, `numeric_recovery`, `total_extraction`, `table_count_accuracy`.
+
+**Leur définition, la normalisation appliquée aux valeurs, les seuils et les mesures qui
+les fondent sont dans [README.md](README.md)**, section « Étape 3 ».
 
 Usage :
-    uv run evaluation_extraction.py [--threshold 0.5 --cell-delta 0]
+    uv run evaluation.py --corpus comptes-sociaux
+    uv run evaluation.py --corpus historiques
+    uv run evaluation.py --corpus all [--threshold 0.5 --cell-delta 0]
 """
 
 import argparse
@@ -35,37 +31,36 @@ import io
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+import corpus_historiques as CH
 import numpy as np
 import pandas as pd
 from extraction_common.s3 import get_s3_fs
+from json_to_csv import _parse_html_tables
 
-BUCKET = "projet-extraction-tableaux"
-S3_ANNOTATIONS = f"{BUCKET}/annotations/clean"
-S3_EVAL_OUTPUT = f"{BUCKET}/reprise/eval/evaluation.parquet"
-S3_CORRESPONDANCES = f"{BUCKET}/reprise/correspondances.parquet"
+import config
+from config import CorpusConfig, Moteur
 
 _SIREN_RE = re.compile(r"\d{9}")
 
-METHODS: dict[str, str] = {
-    "marker": f"{BUCKET}/reprise/output_csv/marker",
-    "opendataloader": f"{BUCKET}/reprise/output_csv/opendataloader",
-    "chandra": f"{BUCKET}/reprise/output_csv/chandra",
-    "marker_last_work": f"{BUCKET}/LLM_eval/output_csv/marker_last_work",
-}
+# Les annotations des comptes sociaux, exposées ici pour `legacy/geometrie_marker.py`, qui
+# les relit. La mesure, elle, passe par la configuration du corpus qu'elle traite.
+S3_ANNOTATIONS = config.charger("comptes-sociaux").annotations
 
 
 # ── Chargement S3 ─────────────────────────────────────────────────────────────
 
 
-def _load_correspondances(fs) -> dict[str, list[str]]:
+def _load_correspondances(fs, chemin: str) -> dict[str, list[str]]:
     """
     Charge le parquet de correspondances.
     Retourne {pure_siren: [xlsx_path_1, ...]} (chemins s3fs sans schéma s3://).
     Le SIREN pur (9 chiffres) est extrait du stem PDF (colonne 'siren').
     """
-    with fs.open(S3_CORRESPONDANCES, "rb") as f:
+    with fs.open(chemin, "rb") as f:
         df = pd.read_parquet(f)
     mapping: dict[str, list[str]] = {}
     for _, row in df.iterrows():
@@ -84,11 +79,8 @@ def _load_correspondances(fs) -> dict[str, list[str]]:
 def _load_csv(fs, path: str) -> pd.DataFrame:
     """Charge un CSV prédit en DataFrame de chaînes.
 
-    La complétion à droite n'est qu'un filet : depuis `_rectangularize`, les extracteurs
-    de `json_to_csv.py` rendent des grilles déjà rectangulaires. Elle ne sert plus que
-    pour les CSV produits avant ce correctif (`output_csv/marker_pre_rowspan/`). La
-    supprimer ne changerait d'ailleurs rien au comportement — `pd.DataFrame` complète
-    aussi les lignes courtes, et `fillna` remplace les manquants par des chaînes vides.
+    La complétion à droite n'est qu'un filet : les extracteurs de `json_to_csv.py` rendent
+    des grilles déjà rectangulaires (cf. README).
 
     Args:
         fs: système de fichiers S3.
@@ -115,6 +107,38 @@ def _load_xlsx(fs, path: str) -> pd.DataFrame:
     return df[~mask].reset_index(drop=True)
 
 
+def load_html(fs, path: str) -> pd.DataFrame:
+    """Charge une annotation HTML en grille de chaînes.
+
+    La référence du corpus historique est lue par le parseur de `json_to_csv.py`, celui-là
+    même qui lit la sortie des moteurs : mêmes conventions de fusion (cf. README).
+
+    Args:
+        fs: système de fichiers S3.
+        path: chemin du fichier HTML.
+
+    Returns:
+        DataFrame de chaînes, lignes entièrement vides retirées et index réinitialisé —
+        même forme que `_load_xlsx` pour le corpus des comptes sociaux.
+
+    Raises:
+        ValueError: si le fichier ne contient aucun `<table>`.
+    """
+    with fs.open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    tables = _parse_html_tables(html)
+    if not tables:
+        raise ValueError("aucun <table> dans l'annotation")
+    if len(tables) > 1:
+        # Une annotation porte un tableau : plusieurs signalent une référence à revoir.
+        print(
+            f"    [WARN] {CH.stem(path)} : {len(tables)} <table> dans l'annotation, le 1er est pris"
+        )
+    df = pd.DataFrame(tables[0], dtype=str).fillna("")
+    mask = df.apply(lambda row: row.str.strip().eq("").all(), axis=1)
+    return df[~mask].reset_index(drop=True)
+
+
 _BASE_STEM_RE = re.compile(r"^(.*?)_(\d+)$")
 
 
@@ -127,9 +151,7 @@ def _base_stem(name: str) -> str:
 def _rank(stem: str) -> int:
     """Rang `{siren}_{n}` d'un nom de fichier, 0 s'il n'en porte pas.
 
-    Le tri lexicographique placerait `_10` avant `_2` : à sept tableaux pour un même SIREN
-    le corpus n'y touche pas, mais l'appariement se fait par rang et ne doit pas en
-    dépendre.
+    Le tri lexicographique placerait `_10` avant `_2`, et l'appariement se fait par rang.
     """
     m = _BASE_STEM_RE.match(stem)
     return int(m.group(2)) if m else 0
@@ -137,16 +159,13 @@ def _rank(stem: str) -> int:
 
 # ── Coupures de page : granularité de la référence, propre au moteur ───────────
 #
-# Un tableau à cheval sur deux pages est annoté une page par fichier. Chandra est appelé
-# page par page et rend la même segmentation : rien à faire. Marker reçoit le PDF entier et
-# son `TableGroup` enjambe parfois la coupure — sur 3 des 6 documents multi-pages du
-# corpus. Face à un tableau marker d'un seul tenant, l'annotation `_2` n'est appariée à
-# rien et ses cellules quittent le dénominateur en silence.
-#
-# On regroupe donc les annotations pour la seule référence de marker, et seulement quand
-# marker a effectivement produit moins de tableaux. Les annotations de chandra ne sont
-# jamais touchées : sa mesure reste celle du découpage par page.
-METHODS_MERGING_PAGE_BREAKS = frozenset({"marker"})
+# Un tableau à cheval sur deux pages est annoté une page par fichier, et un moteur qui voit
+# le PDF entier le rend parfois d'un seul tenant. Les annotations sont alors regroupées pour
+# sa seule référence, et seulement s'il a produit moins de tableaux. Le drapeau se pose
+# moteur par moteur, dans `config/{corpus}.yaml` ; les mesures sont dans le README.
+METHODS_MERGING_PAGE_BREAKS = frozenset(
+    m.nom for cfg in config.tous().values() for m in cfg.moteurs.values() if m.fusion_coupures_page
+)
 
 
 def _same_row(left: pd.Series, right: pd.Series) -> bool:
@@ -171,8 +190,7 @@ def _has_column_header(df: pd.DataFrame) -> bool:
     """Le tableau porte-t-il un en-tête de colonnes, intertitres mis à part ?
 
     `detect_column_header_height` compte comme en-tête toute ligne majoritairement non
-    numérique, intertitre compris : un tableau qui s'ouvre sur « 2. Participations » puis
-    enchaîne sur des données paraît donc en avoir un. On écarte d'abord ces lignes-là.
+    numérique, intertitre compris : on écarte d'abord ces lignes-là (cf. README).
 
     Args:
         df: tableau annoté.
@@ -191,17 +209,8 @@ def _has_column_header(df: pd.DataFrame) -> bool:
 def _page_break_offset(current: pd.DataFrame, nxt: pd.DataFrame) -> int | None:
     """`nxt` est-il la suite de `current` après une coupure de page ?
 
-    Deux formes, et deux seulement, distinguent une coupure d'une succession de tableaux
-    distincts — à largeur identique, condition nécessaire dans les deux cas :
-
-    - `nxt` **n'a pas d'en-tête de colonnes** et reprend directement sur du contenu, qu'il
-      s'agisse de données ou d'un intertitre de section : ce n'est pas un tableau autonome ;
-    - `nxt` **réimprime exactement le même en-tête**, mêmes libellés dans le même ordre,
-      comme le PDF le réimprime en tête de page.
-
-    Un tableau coupé **en largeur** — mêmes lignes, d'autres colonnes sur la page suivante
-    — n'entre dans aucun des deux cas : les largeurs diffèrent, et concaténer par lignes
-    serait faux.
+    Deux formes, et deux seulement, à largeur identique : `nxt` n'a pas d'en-tête de
+    colonnes, ou il réimprime exactement le même. Cf. README.
 
     Args:
         current: tableau annoté précédent.
@@ -239,9 +248,8 @@ def _merge_page_breaks(anns: list[pd.DataFrame], target: int) -> list[pd.DataFra
 
     Returns:
         Les annotations après regroupement. Inchangées si le moteur n'en produit pas moins,
-        ou si aucune coupure n'est reconnue — deux tableaux réellement distincts ne sont
-        jamais fusionnés pour faire tomber le compte, la sous-détection du moteur restant
-        alors visible dans la mesure.
+        ou si aucune coupure n'est reconnue : deux tableaux réellement distincts ne sont
+        jamais fusionnés pour faire tomber le compte (cf. README).
     """
     if target >= len(anns):
         return anns
@@ -259,13 +267,17 @@ def _merge_page_breaks(anns: list[pd.DataFrame], target: int) -> list[pd.DataFra
     return merged
 
 
+# ── Appariement : corpus des comptes sociaux ───────────────────────────────────
+
+
 def _list_pairs(
-    fs, pred_prefix: str, merge_page_breaks: bool = False
+    fs, annotations: str, pred_prefix: str, merge_page_breaks: bool = False
 ) -> tuple[list[tuple[str, pd.DataFrame, str]], Counter]:
     """Apparie annotations (.xlsx) et prédictions (.csv), rang à rang au sein d'un SIREN.
 
     Args:
         fs: système de fichiers S3.
+        annotations: dossier des annotations XLSX de référence.
         pred_prefix: dossier des CSV prédits.
         merge_page_breaks: regrouper les annotations qu'une coupure de page a séparées,
             quand le moteur rend le tableau d'un seul tenant. Réservé aux moteurs qui
@@ -277,7 +289,7 @@ def _list_pairs(
         `table_count_accuracy` — après regroupement le cas échéant, puisque c'est à cette
         granularité que la comparaison a lieu.
     """
-    ann = {Path(p).stem: p for p in fs.glob(f"{S3_ANNOTATIONS}/*.xlsx")}
+    ann = {Path(p).stem: p for p in fs.glob(f"{annotations}/*.xlsx")}
     pred = {Path(p).stem: p for p in fs.glob(f"{pred_prefix}/*.csv")}
 
     by_base: dict[str, list[str]] = {}
@@ -310,13 +322,15 @@ def _list_pairs(
     return pairs, ann_counts
 
 
-def _list_pairs_from_correspondances(fs, pred_prefix: str) -> list[tuple[str, pd.DataFrame, str]]:
+def _list_pairs_from_correspondances(
+    fs, correspondances_path: str, pred_prefix: str
+) -> list[tuple[str, pd.DataFrame, str]]:
     """
     Apparie annotations et prédictions via le parquet de correspondances.
     La i-ème annotation (triée) d'un SIREN est appariée à la prédiction {siren}_{i}.csv.
     Retourne une liste de (nom, annotation chargée, prediction_path).
     """
-    correspondances = _load_correspondances(fs)
+    correspondances = _load_correspondances(fs, correspondances_path)
     pred = {Path(p).stem: p for p in fs.glob(f"{pred_prefix}/*.csv")}
 
     pairs = []
@@ -336,15 +350,138 @@ def _list_pairs_from_correspondances(fs, pred_prefix: str) -> list[tuple[str, pd
     return sorted(pairs, key=lambda pair: pair[0])
 
 
+def _count_per_base(fs, prefix: str, ext: str) -> Counter:
+    """Compte le nombre de fichiers par SIREN (base_stem) dans un dossier S3."""
+    stems = [Path(p).stem for p in fs.glob(f"{prefix}/*{ext}")]
+    return Counter(_base_stem(s) for s in stems)
+
+
+def paires_comptes_sociaux(cfg: CorpusConfig, fs, moteur: Moteur) -> "Paires":
+    """Constitue les paires du corpus des comptes sociaux, pour un moteur.
+
+    Args:
+        cfg: configuration du corpus, qui porte les chemins des annotations et du parquet.
+        fs: système de fichiers S3.
+        moteur: le moteur mesuré. Son mode d'appariement et son drapeau de coupures de page
+            décident de la façon dont l'annotation lui est appariée.
+
+    Returns:
+        Les paires et les deux comptes de tableaux par SIREN, annotés et prédits.
+    """
+    if moteur.appariement == "correspondances":
+        chemin = cfg.sources["correspondances"]
+        pairs = _list_pairs_from_correspondances(fs, chemin, moteur.csv)
+        correspondances = _load_correspondances(fs, chemin)
+        ann_counts = Counter({siren: len(paths) for siren, paths in correspondances.items()})
+    else:
+        pairs, ann_counts = _list_pairs(
+            fs, cfg.annotations, moteur.csv, merge_page_breaks=moteur.fusion_coupures_page
+        )
+    return Paires(pairs, ann_counts, _count_per_base(fs, moteur.csv, ".csv"))
+
+
+# ── Appariement : corpus des tableaux historiques ──────────────────────────────
+
+# `{clé}_{rang}.csv`, où la clé porte elle-même des chiffres et des `_` (`1970_bis`).
+_RANK_RE = re.compile(r"^(.*)_(\d+)$")
+
+
+def _split_rank(nom: str) -> tuple[str, int]:
+    """Sépare le radical d'un CSV prédit de son rang.
+
+    `_base_stem` ne convient pas ici : sur un radical qui est lui-même une année
+    (`crop_1970`), il prendrait `1970` pour le rang.
+
+    Args:
+        nom: nom du CSV sans extension, de la forme `{radical}_{rang}`.
+
+    Returns:
+        Le couple (radical, rang) ; (nom, 0) si le nom ne porte pas de rang.
+    """
+    m = _RANK_RE.match(nom)
+    return (m.group(1), int(m.group(2))) if m else (nom, 0)
+
+
+def list_pairs_historiques(
+    fs, annotations: str, pred_prefix: str
+) -> tuple[list[tuple[str, pd.DataFrame, str]], Counter]:
+    """Apparie annotations HTML et CSV prédits par clé de tableau.
+
+    L'appariement se fait par nom de fichier, `ground_truth_1970_bis.html` ↔
+    `crop_1970_bis_{rang}.csv` : il n'y a ni SIREN ni parquet de correspondances. Le rang 1
+    seul est comparé, les suivants sont signalés (cf. README).
+
+    Args:
+        fs: système de fichiers S3.
+        annotations: dossier des annotations HTML de référence.
+        pred_prefix: dossier des CSV prédits.
+
+    Returns:
+        La liste des (clé du tableau, annotation chargée, chemin de la prédiction), et le
+        nombre de tableaux prédits par clé — un corpus où chaque image porte un tableau
+        entier, ce compte dit la sur-segmentation du moteur.
+    """
+    references = {CH.key_from_annotation(p): p for p in fs.glob(f"{annotations}/*.html")}
+
+    predictions: dict[str, dict[int, str]] = {}
+    for path in fs.glob(f"{pred_prefix}/*.csv"):
+        radical, rang = _split_rank(CH.stem(path))
+        predictions.setdefault(CH.key_from_image(radical), {})[rang] = path
+
+    pairs: list[tuple[str, pd.DataFrame, str]] = []
+    pred_counts: Counter = Counter()
+    sans_prediction: list[str] = []
+    sur_decoupes: list[str] = []
+    for cle in sorted(references):
+        rangs = predictions.get(cle, {})
+        pred_counts[cle] = len(rangs)
+        if 1 not in rangs:
+            sans_prediction.append(cle)
+            continue
+        if len(rangs) > 1:
+            sur_decoupes.append(f"{cle} ({len(rangs)})")
+        pairs.append((cle, load_html(fs, references[cle]), rangs[1]))
+
+    orphelines = sorted(set(predictions) - set(references))
+    if sans_prediction:
+        print(
+            f"    [WARN] {len(sans_prediction)} annotation(s) sans prédiction : "
+            f"{', '.join(sans_prediction)}"
+        )
+    if sur_decoupes:
+        print(
+            f"    [WARN] {len(sur_decoupes)} image(s) découpée(s) en plusieurs tableaux, "
+            f"seul le rang 1 est comparé : {', '.join(sur_decoupes)}"
+        )
+    if orphelines:
+        print(
+            f"    [WARN] {len(orphelines)} prédiction(s) sans annotation : {', '.join(orphelines)}"
+        )
+
+    return pairs, pred_counts
+
+
+def paires_historiques(cfg: CorpusConfig, fs, moteur: Moteur) -> "Paires":
+    """Constitue les paires du corpus des tableaux historiques, pour une condition.
+
+    Args:
+        cfg: configuration du corpus, qui porte le dossier des annotations.
+        fs: système de fichiers S3.
+        moteur: la condition d'extraction mesurée. Sans effet sur l'appariement, qui ne
+            dépend que du nommage des fichiers.
+
+    Returns:
+        Les paires et les deux comptes de tableaux par clé d'image. Le compte annoté vaut
+        1 partout : une image porte un tableau entier.
+    """
+    pairs, pred_counts = list_pairs_historiques(fs, cfg.annotations, moteur.csv)
+    return Paires(pairs, Counter({cle: 1 for cle, _, _ in pairs}), pred_counts)
+
+
 # ── Helpers cellules ──────────────────────────────────────────────────────────
 
-# Toutes les variantes de tiret jouent le même rôle dans ces tableaux — marque d'absence
-# dans une cellule de données, signe négatif devant un montant, séparateur dans un
-# libellé — et ne doivent donc pas distinguer deux valeurs. Les annotations écrivent
-# « - » là où les moteurs rendent « — » : sans cette équivalence, 14 cellules de
-# `TAB_552096281_2` étaient comptées comme du texte à la place d'un nombre, et
-# « A - FILIALES DETENUES » ne s'appariait pas à « A – FILIALES DETENUES » (similarité
-# 0,25, l'annotation et la prédiction ne différant que par le demi-cadratin).
+# Toutes les variantes de tiret jouent le même rôle dans ces tableaux et ne doivent donc pas
+# distinguer deux valeurs : cf. README.
 _DASHES = str.maketrans(dict.fromkeys("‐‑‒–—―−﹘﹣－", "-"))
 
 
@@ -363,13 +500,8 @@ def _unify_dashes(value: str) -> str:
 def _normalize_label(value: str) -> str:
     """Ramène un libellé à sa graphie canonique, pour la seule comparaison.
 
-    Casse, accents, espaces et variantes de tiret ne distinguent pas deux libellés : un
-    moteur qui compose ses en-têtes en capitales décrit les mêmes colonnes qu'une
-    annotation en bas de casse. Comparées telles quelles par distance de Levenshtein,
-    « Capital » et « CAPITAL » tombent à 0,14 de similarité — sous le seuil de 0,5, donc
-    non appariées. Sur `TAB_300221017_1`, chandra rend l'en-tête entier en capitales :
-    les 11 colonnes échouaient à s'apparier et les 350 cellules de données étaient
-    comptées perdues, pour une extraction pourtant juste.
+    Casse, accents, espaces et variantes de tiret ne distinguent pas deux libellés : ce que
+    coûtait leur comparaison brute est mesuré dans le README.
 
     Args:
         value: libellé brut.
@@ -410,12 +542,8 @@ def _looks_numeric(value: str) -> bool:
     """La cellule relève-t-elle de la zone de données, plutôt que d'un en-tête ?
 
     Volontairement permissive : elle décide du dénominateur de `numeric_recovery`, pas de
-    l'égalité de deux valeurs — comparer est l'affaire de `_normalize_numeric_str`. Sont
-    donc acceptés, en plus des nombres purs et de la cellule vide :
-
-    - parenthèses comptables : (14) → -14
-    - unités en suffixe      : 15,24 €, 344 369 NOK, 100,00%
-    - placeholders d'absence : -, NC, ND, N/A
+    l'égalité de deux valeurs — comparer est l'affaire de `_normalize_numeric_str`. Ce
+    qu'elle accepte en plus des nombres purs et de la cellule vide : cf. README.
 
     Args:
         value: cellule brute.
@@ -441,10 +569,7 @@ def _looks_numeric(value: str) -> bool:
         return False
 
 
-# Les trois familles d'écarts purement typographiques que la comparaison doit absorber :
-# une valeur entre parenthèses est un négatif en écriture comptable, un signe peut être
-# détaché du nombre par une espace, et le séparateur décimal s'écrit indifféremment
-# virgule ou point. Dans les trois cas les deux côtés portent les mêmes chiffres.
+# Les écarts purement typographiques que la comparaison doit absorber : cf. README.
 _ACCOUNTING_RE = re.compile(r"^\((.+)\)$")
 _LEADING_SIGN_RE = re.compile(r"^-[\s\xa0\u202f]*")
 _THOUSANDS_RE = re.compile(r"(\d)[\s\xa0\u202f]+(\d)")
@@ -455,9 +580,7 @@ _PLAIN_RE = re.compile(r"\d+(?:[,.]\d+)?")
 def _canonical_number(body: str) -> str | None:
     """Forme canonique d'un nombre non signé, ou None si ce n'en est pas un.
 
-    Le cas général n'emprunte pas `float` : sur un montant de plus de dix chiffres
-    significatifs — `10 640 226 396` existe dans le corpus — un formatage en `.10g`
-    arrondirait, et deux montants voisins se confondraient.
+    Le cas général n'emprunte pas `float`, qui arrondirait les grands montants : cf. README.
 
     Args:
         body: chaîne sans signe, espaces séparateurs de milliers déjà retirés.
@@ -479,19 +602,10 @@ def _canonical_number(body: str) -> str | None:
 def _normalize_numeric_str(val: str) -> str:
     """Ramène une cellule à une forme canonique, pour la seule comparaison.
 
-    Absorbe les écarts d'écriture, ceux où les deux côtés portent les mêmes chiffres :
-
-    - espaces séparateurs de milliers, insécables compris : '25 000' → '25000' ;
-    - séparateur décimal : '2.08' et '2,08' → '2.08' ;
-    - signe négatif détaché du nombre : '- 30 000' → '-30000' ;
-    - parenthèses comptables : '(1 976)' → '-1976' ;
-    - pourcentages, convertis en décimales : '100%' et '100,00%' → '1' ;
-    - variantes de tiret : '—' → '-', '−30' → '-30'.
-
-    Une cellule qui n'est pas un nombre est rendue telle quelle, tirets unifiés et espaces
-    entre chiffres retirés : la comparaison reste alors textuelle. **Signe et parenthèses
-    ne sont interprétés que devant un nombre** — sans quoi '(en milliers d'euros)' se
-    verrait attribuer un signe négatif.
+    Absorbe les écarts d'écriture, ceux où les deux côtés portent les mêmes chiffres — la
+    liste complète est dans le README. Une cellule qui n'est pas un nombre est rendue telle
+    quelle, tirets unifiés et espaces entre chiffres retirés : la comparaison reste alors
+    textuelle. **Signe et parenthèses ne sont interprétés que devant un nombre.**
 
     Args:
         val: cellule brute.
@@ -554,17 +668,11 @@ def _non_numeric_rate(series: pd.Series) -> float:
 
 
 def detect_column_header_height(df: pd.DataFrame) -> int:
-    """
-    Nombre de lignes formant l'en-tête des colonnes.
-    Intègre les lignes numériques initiales, puis les lignes majoritairement
-    non-numériques (taux non-numérique >= 0.5).
+    """Nombre de lignes formant l'en-tête des colonnes.
 
-    Garde-fous :
-    - Si aucune ligne textuelle n'est absorbée par la phase 2, on considère qu'il
-      n'y a pas d'en-tête de colonnes (ex. tableaux filiales sans ligne d'en-tête).
-    - Si la phase 2 absorbe TOUTES les lignes restantes jusqu'à la fin (typique
-      des tableaux text-heavy où chaque ligne a `rate >= 0.5` sans pour autant
-      être un en-tête), on retombe sur les seules lignes 100% non-numériques.
+    Intègre les lignes numériques initiales, puis les lignes majoritairement non
+    numériques. Les deux garde-fous — aucune ligne textuelle absorbée, ou toutes — sont
+    justifiés dans le README.
     """
     n, i = len(df), 0
     while i < n and _non_numeric_rate(df.iloc[i]) < 0.5:
@@ -727,12 +835,8 @@ def evaluate_pair(
     col_recovery = len(col_match) / n_ann_cols if n_ann_cols else 0.0
     row_recovery = len(row_match) / n_ann_rows if n_ann_rows else 0.0
 
-    # Cellules numériques (zone de données, hors en-têtes)
-    # On compte toutes les cellules `_looks_numeric` (nombres purs, unités, parenthèses,
-    # placeholders), et on les compare toutes par `_normalize_numeric_str`. Un seul chemin :
-    # les cellules à unité ou à parenthèses partaient autrefois en comparaison de chaîne
-    # brute, ce qui comptait fausses `100%` contre `100,00%` ou `2.08` contre `2,08` — des
-    # écarts d'écriture, à chiffres identiques de part et d'autre.
+    # Cellules numériques (zone de données, hors en-têtes) : toutes celles que
+    # `_looks_numeric` retient, comparées par un seul chemin (cf. README).
     total_num = recovered_num = 0
     for r in range(ann_hrows, n_ann_rows):
         for c in range(ann_hcols, n_ann_cols):
@@ -789,43 +893,163 @@ def evaluate_pair(
     }
 
 
-# ── Comptage de tableaux par SIREN ────────────────────────────────────────────
+# ── Résumés, propres à chaque corpus ──────────────────────────────────────────
 
 
-def _count_per_base(fs, prefix: str, ext: str) -> Counter:
-    """Compte le nombre de fichiers par SIREN (base_stem) dans un dossier S3."""
-    stems = [Path(p).stem for p in fs.glob(f"{prefix}/*{ext}")]
-    return Counter(_base_stem(s) for s in stems)
+def _resume_comptes_sociaux(sub: pd.DataFrame) -> None:
+    """Imprime le comptage de tableaux d'un moteur, à la granularité du SIREN.
+
+    Un SIREN porte plusieurs tableaux : le compte se fait donc après déduplication, une
+    ligne par SIREN, et non par paire évaluée.
+    """
+    if "n_ann_tables" not in sub.columns or "n_pred_tables" not in sub.columns:
+        return
+    siren_df = sub.copy()
+    siren_df["_siren"] = siren_df["fichier"].apply(_base_stem)
+    siren_df = siren_df.drop_duplicates("_siren")
+    n_total = len(siren_df)
+    n_match = (siren_df["n_pred_tables"] == siren_df["n_ann_tables"]).sum()
+    print(f"    {'---':<25}")
+    print(f"    {'table_count_accuracy':<25}: {n_match / n_total:.4f}  ({n_match}/{n_total} SIREN)")
+    print(f"    {'moy. tableaux annotés':<25}: {siren_df['n_ann_tables'].mean():.2f}")
+    print(f"    {'moy. tableaux détectés':<25}: {siren_df['n_pred_tables'].mean():.2f}")
+
+
+def _resume_historiques(sub: pd.DataFrame) -> None:
+    """Imprime la récupération par cellule et le comptage de tableaux d'une condition.
+
+    Une image porte un tableau : `table_count_accuracy` compte donc les images dont le
+    moteur a rendu exactement une grille.
+    """
+    cellule = sub["n_recovered_numeric"].sum() / sub["n_numeric_cells"].sum()
+    print(f"    {'récup. par cellule':<25}: {cellule:.4f}")
+    n_match = (sub["n_pred_tables"] == 1).sum()
+    print(f"    {'table_count_accuracy':<25}: {n_match / len(sub):.4f}  ({n_match}/{len(sub)})")
+
+
+# ── Corpus : ce qui distingue une mesure de l'autre ───────────────────────────
+
+
+@dataclass(frozen=True)
+class Paires:
+    """Paires d'un moteur, et les deux comptes de tableaux qui font `table_count_accuracy`.
+
+    Attributes:
+        pairs: les (nom du tableau, annotation chargée, chemin de la prédiction).
+        ann_counts: nombre de tableaux annotés par clé de document.
+        pred_counts: nombre de tableaux prédits par clé de document.
+    """
+
+    pairs: list[tuple[str, pd.DataFrame, str]]
+    ann_counts: Counter
+    pred_counts: Counter
+
+
+@dataclass(frozen=True)
+class Corpus:
+    """Tout ce qu'un corpus apporte de particulier à la mesure.
+
+    Ce que le corpus a de *configurable* — chemins, moteurs, seuils — vit dans `cfg` ;
+    ce qu'il a de *codé* — appariement, clé de comptage, résumé — vit dans les trois
+    callables.
+
+    Attributes:
+        cfg: configuration du corpus, lue depuis `config/{nom}.yaml`.
+        lister_paires: (config, fs, moteur) → `Paires`.
+        cle_document: du nom d'un tableau à la clé sous laquelle les tableaux sont comptés
+            — le SIREN pour les comptes sociaux, la clé d'image pour les historiques.
+        resume: complément de résumé imprimé sous les moyennes de chaque méthode.
+    """
+
+    cfg: CorpusConfig
+    lister_paires: Callable[..., Paires]
+    cle_document: Callable[[str], str]
+    resume: Callable[[pd.DataFrame], None]
+
+    @property
+    def eval_output(self) -> str:
+        """Chemin S3 du parquet des métriques."""
+        return self.cfg.evaluation["sortie"]
+
+    @property
+    def largeur_nom(self) -> int:
+        """Largeur de la colonne des noms à l'affichage."""
+        return self.cfg.evaluation["largeur_nom"]
+
+
+# Le code que chaque mode d'appariement apporte à la mesure. La configuration d'un corpus
+# désigne le sien par `evaluation.appariement` : ajouter un corpus qui s'apparie comme un
+# corpus existant ne demande donc qu'un fichier YAML.
+TRAITEMENTS: dict[str, tuple] = {
+    # Par SIREN, rang à rang.
+    "rang": (paires_comptes_sociaux, _base_stem, _resume_comptes_sociaux),
+    # Par nom de fichier. Le nom d'un tableau *est* la clé de son image : rien à en retirer.
+    "cle_fichier": (paires_historiques, lambda nom: nom, _resume_historiques),
+}
+
+
+def _corpus(cfg: CorpusConfig) -> Corpus:
+    """Assemble la mesure d'un corpus : sa configuration, et le code de son appariement.
+
+    Args:
+        cfg: configuration du corpus.
+
+    Returns:
+        Le corpus prêt à mesurer.
+
+    Raises:
+        SystemExit: si le mode d'appariement déclaré n'est pas implémenté ici.
+    """
+    mode = cfg.evaluation["appariement"]
+    if mode not in TRAITEMENTS:
+        raise SystemExit(
+            f"Corpus {cfg.nom} : appariement {mode!r} inconnu. "
+            f"Modes implémentés : {', '.join(TRAITEMENTS)}."
+        )
+    lister, cle, resume = TRAITEMENTS[mode]
+    return Corpus(cfg=cfg, lister_paires=lister, cle_document=cle, resume=resume)
+
+
+CORPUS: dict[str, Corpus] = {nom: _corpus(cfg) for nom, cfg in config.tous().items()}
 
 
 # ── Évaluation par lot ────────────────────────────────────────────────────────
 
 
-def evaluate_dataset(threshold: float = 0.5, cell_delta: int = 0) -> pd.DataFrame:
+def evaluate_dataset(
+    corpus: str = "comptes-sociaux", threshold: float | None = None, cell_delta: int | None = None
+) -> pd.DataFrame:
+    """Évalue tout un corpus et dépose le parquet des métriques sur S3.
+
+    Args:
+        corpus: clé de `CORPUS`, c'est-à-dire un fichier de `config/`.
+        threshold: similarité minimale pour apparier deux en-têtes. Par défaut, le
+            `seuil_similarite` déclaré par le corpus.
+        cell_delta: tolérance en colonnes (±) pour `total_extraction`. Par défaut, la
+            `tolerance_colonnes` déclarée par le corpus.
+
+    Returns:
+        Le tableau des métriques, une ligne par couple tableau × méthode.
+    """
+    conf = CORPUS[corpus]
+    if threshold is None:
+        threshold = conf.cfg.evaluation["seuil_similarite"]
+    if cell_delta is None:
+        cell_delta = conf.cfg.evaluation["tolerance_colonnes"]
     fs = get_s3_fs()
     all_results: list[dict] = []
 
-    for method, pred_prefix in METHODS.items():
-        if method == "marker_last_work":
-            pairs = _list_pairs_from_correspondances(fs, pred_prefix)
-            correspondances = _load_correspondances(fs)
-            ann_counts = Counter({siren: len(paths) for siren, paths in correspondances.items()})
-        else:
-            pairs, ann_counts = _list_pairs(
-                fs, pred_prefix, merge_page_breaks=method in METHODS_MERGING_PAGE_BREAKS
-            )
-        print(f"\n[{method}] {len(pairs)} paire(s) trouvée(s)")
+    for method, moteur in conf.cfg.moteurs.items():
+        paires = conf.lister_paires(conf.cfg, fs, moteur)
+        print(f"\n[{method}] {len(paires.pairs)} paire(s) trouvée(s)")
 
-        pred_counts = _count_per_base(fs, pred_prefix, ".csv")
-
-        for name, ann_df, pred_path in pairs:
-            base = _base_stem(name)
+        for name, ann_df, pred_path in paires.pairs:
             try:
                 pred_df = _load_csv(fs, pred_path)
                 metrics = evaluate_pair(ann_df, pred_df, threshold=threshold, cell_delta=cell_delta)
                 metrics.update({"fichier": name, "methode": method})
                 print(
-                    f"  {name:<30} "
+                    f"  {name:<{conf.largeur_nom}} "
                     f"col={metrics['col_recovery']:.3f}  "
                     f"row={metrics['row_recovery']:.3f}  "
                     f"num={metrics['numeric_recovery']:.3f}  "
@@ -841,44 +1065,34 @@ def evaluate_dataset(threshold: float = 0.5, cell_delta: int = 0) -> pd.DataFram
                     "numeric_recovery": None,
                     "total_extraction": None,
                 }
-            metrics["n_ann_tables"] = ann_counts.get(base, 0)
-            metrics["n_pred_tables"] = pred_counts.get(base, 0)
+            cle = conf.cle_document(name)
+            metrics["n_ann_tables"] = paires.ann_counts.get(cle, 0)
+            metrics["n_pred_tables"] = paires.pred_counts.get(cle, 0)
             all_results.append(metrics)
 
     df = pd.DataFrame(all_results)
-    _save_parquet(fs, df)
-    _print_summary(df)
+    _save_parquet(fs, df, conf.eval_output)
+    _print_summary(df, conf)
     return df
 
 
-def _save_parquet(fs, df: pd.DataFrame) -> None:
+def _save_parquet(fs, df: pd.DataFrame, path: str) -> None:
     buf = io.BytesIO()
     df.to_parquet(buf, index=False)
-    fs.pipe(S3_EVAL_OUTPUT, buf.getvalue())
-    print(f"\nRésultats sauvegardés : s3://{S3_EVAL_OUTPUT}")
+    fs.pipe(path, buf.getvalue())
+    print(f"\nRésultats sauvegardés : s3://{path}")
 
 
-def _print_summary(df: pd.DataFrame) -> None:
+def _print_summary(df: pd.DataFrame, conf: Corpus) -> None:
+    """Imprime les moyennes par méthode, puis le complément propre au corpus."""
     metric_cols = ["col_recovery", "row_recovery", "numeric_recovery", "total_extraction"]
     print("\n=== Moyennes par méthode ===")
     for method in df["methode"].dropna().unique():
         sub = df[df["methode"] == method]
-        print(f"\n  {method}")
+        print(f"\n  {method}  (n={len(sub)})")
         for col in metric_cols:
             print(f"    {col:<25}: {sub[col].dropna().mean():.4f}")
-
-        if "n_ann_tables" in sub.columns and "n_pred_tables" in sub.columns:
-            siren_df = sub.copy()
-            siren_df["_siren"] = siren_df["fichier"].apply(_base_stem)
-            siren_df = siren_df.drop_duplicates("_siren")
-            n_total = len(siren_df)
-            n_match = (siren_df["n_pred_tables"] == siren_df["n_ann_tables"]).sum()
-            print(f"    {'---':<25}")
-            print(
-                f"    {'table_count_accuracy':<25}: {n_match / n_total:.4f}  ({n_match}/{n_total} SIREN)"
-            )
-            print(f"    {'moy. tableaux annotés':<25}: {siren_df['n_ann_tables'].mean():.2f}")
-            print(f"    {'moy. tableaux détectés':<25}: {siren_df['n_pred_tables'].mean():.2f}")
+        conf.resume(sub)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -886,16 +1100,28 @@ def _print_summary(df: pd.DataFrame) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Évaluation de l'extraction de tableaux")
     parser.add_argument(
+        "--corpus",
+        choices=[*CORPUS, "all"],
+        default="comptes-sociaux",
+        help="corpus à évaluer (défaut : comptes-sociaux)",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
-        default=0.5,
-        help="Seuil de similarité Levenshtein pour le matching (défaut : 0.5)",
+        default=None,
+        help="Seuil de similarité Levenshtein pour le matching (défaut : celui du corpus)",
     )
     parser.add_argument(
         "--cell-delta",
         type=int,
-        default=0,
-        help="Tolérance en colonnes (±) pour numeric_recovery et total_extraction (défaut : 0)",
+        default=None,
+        help=(
+            "Tolérance en colonnes (±) pour numeric_recovery et total_extraction "
+            "(défaut : celle du corpus)"
+        ),
     )
     args = parser.parse_args()
-    evaluate_dataset(threshold=args.threshold, cell_delta=args.cell_delta)
+
+    for nom in CORPUS if args.corpus == "all" else [args.corpus]:
+        print(f"\n{'=' * 78}\n=== Corpus : {nom}\n{'=' * 78}")
+        evaluate_dataset(nom, threshold=args.threshold, cell_delta=args.cell_delta)

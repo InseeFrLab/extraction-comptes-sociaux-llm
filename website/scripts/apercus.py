@@ -14,52 +14,59 @@ CI ne fait plus que télécharger les JPEG déjà réduits.
     Tableaux historiques — une image par scan
       pdf/tableaux historiques/crop_{clé}.* → tableaux_historiques/apercus/{clé}.jpg
 
-Le grand côté est ramené à `--cote-max` (défaut 2200 px), soit la résolution à laquelle le
-VLM lit ces documents : l'aperçu montre donc ce que le moteur a vu, ce qui est exactement
-ce qu'on veut pour un diagnostic.
+Le grand côté est ramené à `--cote-max`, par défaut celui que déclare le corpus
+(`site.apercus.cote_max`), soit la résolution à laquelle le VLM lit ces documents :
+l'aperçu montre donc ce que le moteur a vu, ce qui est exactement ce qu'on veut pour un
+diagnostic.
 
-Usage :
-    uv run apercus.py --corpus all
-    uv run apercus.py --corpus historiques --overwrite
-    uv run apercus.py --corpus comptes-sociaux --cote-max 1600
+Usage (depuis la racine du dépôt, `A =` abrège la commande) :
+    A="uv run --project website python website/scripts/apercus.py"
+    $A --corpus all
+    $A --corpus historiques --overwrite
+    $A --corpus comptes-sociaux --cote-max 1600
 """
 
 import argparse
 import io
+import sys
+from pathlib import Path
 
 import pandas as pd
 import pymupdf as fitz
 import s3fs
-from corpus_historiques import (
-    BUCKET,
-    IMAGE_EXTENSIONS,
-    S3_IMAGES,
-    key_from_image,
-)
-from extraction_common.s3 import get_s3_fs
-from PIL import Image
 
-S3_APERCUS_HISTORIQUES = f"{BUCKET}/tableaux_historiques/apercus"
-S3_APERCUS_COMPTES = f"{BUCKET}/reprise/apercus"
-S3_CORRESPONDANCES = f"{BUCKET}/reprise/correspondances.parquet"
+# Les conventions de nommage du corpus historique vivent dans `scripts/`, à la racine du
+# dépôt : le site les lit, il ne les redéclare pas.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-# Grand côté de l'aperçu, en pixels, et qualité JPEG. Le couple est choisi pour que les
-# 95 aperçus du site tiennent dans quelques dizaines de mégaoctets tout en restant lisibles
-# sur un tableau dense : la page les charge de toute façon à la demande.
-COTE_MAX = 2200
-QUALITE = 78
+from corpus_historiques import IMAGE_EXTENSIONS, S3_IMAGES, key_from_image  # noqa: E402
+from extraction_common.s3 import get_s3_fs  # noqa: E402
+from PIL import Image  # noqa: E402
+
+import config  # noqa: E402
+
+# Grand côté de l'aperçu et qualité JPEG viennent de la section `site.apercus` de chaque
+# corpus : le couple est choisi pour que les aperçus du site tiennent dans quelques dizaines
+# de mégaoctets tout en restant lisibles sur un tableau dense.
+HISTORIQUES = config.charger("historiques")
+COMPTES = config.charger("comptes-sociaux")
+
+S3_APERCUS_HISTORIQUES = HISTORIQUES.site["apercus"]["prefixe"]
+S3_APERCUS_COMPTES = COMPTES.site["apercus"]["prefixe"]
+S3_CORRESPONDANCES = COMPTES.sources["correspondances"]
 
 # Ces scans dépassent la garde anti-bombe de Pillow (89 Mpx). Le corpus est déposé par nos
 # soins, la garde n'a rien à protéger ici.
 Image.MAX_IMAGE_PIXELS = None
 
 
-def _en_jpeg(image: Image.Image, cote_max: int) -> bytes:
+def _en_jpeg(image: Image.Image, cote_max: int, qualite: int) -> bytes:
     """Réduit une image et l'encode en JPEG.
 
     Args:
         image: image source, mode quelconque.
         cote_max: grand côté maximal, en pixels. Une image plus petite n'est pas agrandie.
+        qualite: qualité JPEG, celle que le corpus déclare.
 
     Returns:
         Le JPEG en octets.
@@ -71,7 +78,7 @@ def _en_jpeg(image: Image.Image, cote_max: int) -> bytes:
         facteur = cote_max / max(largeur, hauteur)
         image = image.resize((round(largeur * facteur), round(hauteur * facteur)), Image.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, "JPEG", quality=QUALITE, optimize=True, progressive=True)
+    image.save(buffer, "JPEG", quality=qualite, optimize=True, progressive=True)
     return buffer.getvalue()
 
 
@@ -81,17 +88,19 @@ def _ecrire(fs: s3fs.S3FileSystem, chemin: str, contenu: bytes) -> None:
     print(f"  -> {chemin.rsplit('/', 1)[-1]} ({len(contenu) / 1024:.0f} Ko)")
 
 
-def apercus_historiques(fs: s3fs.S3FileSystem, cote_max: int, overwrite: bool) -> int:
+def apercus_historiques(fs: s3fs.S3FileSystem, cote_max: int | None, overwrite: bool) -> int:
     """Fabrique un aperçu par scan du corpus historique.
 
     Args:
         fs: système de fichiers S3.
-        cote_max: grand côté maximal, en pixels.
+        cote_max: grand côté maximal, en pixels ; celui du corpus si None.
         overwrite: refaire les aperçus déjà présents.
 
     Returns:
         Le nombre d'aperçus écrits.
     """
+    reglages = HISTORIQUES.site["apercus"]
+    cote_max = reglages["cote_max"] if cote_max is None else cote_max
     sources = {
         key_from_image(p): p
         for p in sorted(fs.ls(S3_IMAGES, detail=False))
@@ -108,12 +117,12 @@ def apercus_historiques(fs: s3fs.S3FileSystem, cote_max: int, overwrite: bool) -
         print(f"  {cle}")
         with fs.open(chemin, "rb") as f:
             image = Image.open(io.BytesIO(f.read()))
-        _ecrire(fs, cible, _en_jpeg(image, cote_max))
+        _ecrire(fs, cible, _en_jpeg(image, cote_max, reglages["qualite_jpeg"]))
         ecrits += 1
     return ecrits
 
 
-def apercus_comptes_sociaux(fs: s3fs.S3FileSystem, cote_max: int, overwrite: bool) -> int:
+def apercus_comptes_sociaux(fs: s3fs.S3FileSystem, cote_max: int | None, overwrite: bool) -> int:
     """Fabrique un aperçu par page des PDF de comptes sociaux.
 
     L'aperçu est rattaché au document, pas au tableau : un PDF de deux pages en produit
@@ -123,12 +132,14 @@ def apercus_comptes_sociaux(fs: s3fs.S3FileSystem, cote_max: int, overwrite: boo
 
     Args:
         fs: système de fichiers S3.
-        cote_max: grand côté maximal, en pixels.
+        cote_max: grand côté maximal, en pixels ; celui du corpus si None.
         overwrite: refaire les aperçus déjà présents.
 
     Returns:
         Le nombre d'aperçus écrits.
     """
+    reglages = COMPTES.site["apercus"]
+    cote_max = reglages["cote_max"] if cote_max is None else cote_max
     with fs.open(S3_CORRESPONDANCES, "rb") as f:
         correspondances = pd.read_parquet(f)
     documents = correspondances[correspondances.pdf.notna() & correspondances.xlsx.notna()]
@@ -150,7 +161,11 @@ def apercus_comptes_sociaux(fs: s3fs.S3FileSystem, cote_max: int, overwrite: boo
             zoom = cote_max / max(page.rect.width, page.rect.height)
             pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
             image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-            _ecrire(fs, f"{S3_APERCUS_COMPTES}/{siren}_p{numero}.jpg", _en_jpeg(image, cote_max))
+            _ecrire(
+                fs,
+                f"{S3_APERCUS_COMPTES}/{siren}_p{numero}.jpg",
+                _en_jpeg(image, cote_max, reglages["qualite_jpeg"]),
+            )
             ecrits += 1
         document.close()
     return ecrits
@@ -160,15 +175,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--corpus",
-        choices=["historiques", "comptes-sociaux", "all"],
+        choices=[*config.corpus_disponibles(), "all"],
         default="all",
         help="corpus à traiter (défaut : all)",
     )
     parser.add_argument(
         "--cote-max",
         type=int,
-        default=COTE_MAX,
-        help=f"grand côté de l'aperçu, en pixels (défaut : {COTE_MAX})",
+        default=None,
+        help="grand côté de l'aperçu, en pixels (défaut : celui déclaré par le corpus)",
     )
     parser.add_argument(
         "--overwrite", action="store_true", help="refaire les aperçus déjà présents"

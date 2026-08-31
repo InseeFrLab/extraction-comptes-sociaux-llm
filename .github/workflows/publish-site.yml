@@ -7,7 +7,13 @@ on:
     # Ne republie que si le site ou ce dont il dépend a bougé.
     paths:
       - "website/**"
-      - "scripts/evaluation_extraction.py"
+      # Les chemins et moteurs que le site publie viennent de la config des corpus.
+      - "config/**"
+      # `website/scripts/build_data*.py` réutilise les fonctions de la mesure.
+      - "scripts/config.py"
+      - "scripts/evaluation.py"
+      - "scripts/corpus_historiques.py"
+      - "scripts/json_to_csv.py"
       - "libs/**"
       - ".github/workflows/publish-site.yml"
   workflow_dispatch:
@@ -52,8 +58,8 @@ jobs:
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
         run: |
-          uv run --project website python website/build_data.py
-          uv run --project website python website/build_data_historiques.py
+          uv run --project website python website/scripts/build_data.py
+          uv run --project website python website/scripts/build_data_historiques.py
 
       - name: Signaler l'absence de données
         if: steps.data.outcome == 'failure'

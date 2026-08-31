@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """
-Conversion des JSONs de sortie Marker / OpenDataLoader en tableaux CSV, vers S3.
+Conversion des sorties brutes des moteurs (JSON marker/chandra, HTML OpenDataLoader) en
+tableaux CSV, vers S3.
 
-Marker      : s3://projet-extraction-tableaux/reprise/output_marker/
-               → s3://projet-extraction-tableaux/reprise/output_csv/marker/
-OpenDataLoader : s3://projet-extraction-tableaux/reprise/output_opendataloader/
-               → s3://projet-extraction-tableaux/reprise/output_csv/opendataloader/
-marker_last_work : s3://projet-extraction-tableaux/LLM_eval/response_json/
-               → s3://projet-extraction-tableaux/LLM_eval/output_csv/marker_last_work/
-chandra_historiques : s3://projet-extraction-tableaux/tableaux_historiques/output_chandra/
-               → s3://projet-extraction-tableaux/tableaux_historiques/output_csv/chandra/
-Chaque moteur du corpus historique a son entrée, cf. scripts/corpus_historiques.py.
+Une **méthode** est un couple (corpus, moteur) : les préfixes d'entrée et de sortie,
+l'extension lue et l'extracteur qui sait la lire viennent tous de `config/*.yaml`, section
+`moteurs`. Les moteurs d'un corpus qui en déclare un sont suffixés (`chandra` pour les
+comptes sociaux, `chandra_historiques` pour les tableaux historiques) : convertir un
+nouveau moteur ne demande donc qu'une entrée dans le fichier de configuration de son
+corpus, et rien ici.
 
-Usage :
+**Les choix de conversion et les mesures qui les fondent sont dans [README.md](README.md)**,
+section « Étape 2 » : traitement des fusions, tolérance du parseur, découpage des lignes
+empilées, placement des sous-lignes d'en-tête, recollage des blocs chandra.
+
+Usage (`--method all` par défaut ; `--list` énumère les méthodes configurées) :
+    uv run json_to_csv.py --list
     uv run json_to_csv.py --method marker
-    uv run json_to_csv.py --method opendataloader
-    uv run json_to_csv.py --method marker_last_work
-    uv run json_to_csv.py --method chandra
     uv run json_to_csv.py --method chandra_historiques
-    uv run json_to_csv.py --method chandra_prompt_ocr_historiques
-    uv run json_to_csv.py --method chandra_prompt_layout_historiques
-    uv run json_to_csv.py --method chandra_borne_historiques
-    uv run json_to_csv.py --method all          (défaut)
+    uv run json_to_csv.py --method all
     uv run json_to_csv.py --method marker --overwrite   (régénère au lieu d'ignorer)
 """
 
@@ -39,60 +36,11 @@ from pathlib import Path
 import s3fs
 from extraction_common.s3 import get_s3_fs
 
-BUCKET = "projet-extraction-tableaux"
+import config
 
-SOURCES: dict[str, dict] = {
-    "marker": {
-        "input": f"{BUCKET}/reprise/output_marker",
-        "output": f"{BUCKET}/reprise/output_csv/marker",
-        "ext": ".json",
-    },
-    "opendataloader": {
-        "input": f"{BUCKET}/reprise/output_opendataloader",
-        "output": f"{BUCKET}/reprise/output_csv/opendataloader",
-        "ext": ".html",
-    },
-    "chandra": {
-        "input": f"{BUCKET}/reprise/output_chandra",
-        "output": f"{BUCKET}/reprise/output_csv/chandra",
-        "ext": ".json",
-    },
-    # Corpus « tableaux historiques ». Plusieurs conditions y sont comparées — notre appel
-    # direct et les variantes qui en bougent un réglage à la fois — mais toutes rendent la
-    # sortie d'API de chandra, donc rigoureusement le même extracteur. Une entrée par moteur
-    # de `corpus_historiques.MOTEURS`, même préfixe S3 : c'est le seul endroit à tenir à jour
-    # quand une condition s'y ajoute.
-    "chandra_historiques": {
-        "input": f"{BUCKET}/tableaux_historiques/output_chandra",
-        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra",
-        "ext": ".json",
-        "extractor": "chandra",
-    },
-    "chandra_prompt_ocr_historiques": {
-        "input": f"{BUCKET}/tableaux_historiques/output_chandra_prompt_ocr",
-        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_prompt_ocr",
-        "ext": ".json",
-        "extractor": "chandra",
-    },
-    "chandra_prompt_layout_historiques": {
-        "input": f"{BUCKET}/tableaux_historiques/output_chandra_prompt_layout",
-        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_prompt_layout",
-        "ext": ".json",
-        "extractor": "chandra",
-    },
-    "chandra_borne_historiques": {
-        "input": f"{BUCKET}/tableaux_historiques/output_chandra_borne",
-        "output": f"{BUCKET}/tableaux_historiques/output_csv/chandra_borne",
-        "ext": ".json",
-        "extractor": "chandra",
-    },
-    "marker_last_work": {
-        "input": f"{BUCKET}/LLM_eval/response_json",
-        "output": f"{BUCKET}/LLM_eval/output_csv/marker_last_work",
-        "ext": ".json",
-        "strip_prefix": "response_",
-    },
-}
+# Les méthodes convertibles : un moteur de chaque corpus configuré, indexé par la clé que
+# prend `--method`. Ajouter une condition d'expérience se fait dans `config/*.yaml`.
+SOURCES = config.moteurs()
 
 Table = list[list[str]]
 
@@ -103,10 +51,7 @@ Table = list[list[str]]
 # règle « au moins deux » pour qualifier une ligne de données.
 _NUMERIC_CELL_RE = re.compile(r"^[(\-−+]?\d[\d\s  .,%()€$/–—-]*$")
 
-# Dans le tableau réglementaire des filiales et participations, le seul en-tête à
-# sous-colonnes est le bloc « valeurs comptables » / « valeur d'inventaire » des titres
-# détenus, scindé en « Brute » / « Nette ». C'est lui que détaille une sous-ligne
-# d'en-tête, et c'est sa cellule de continuation que les moteurs omettent.
+# Le vocabulaire du seul en-tête à sous-colonnes du corpus : cf. README.
 _GROUP_HEADER_RE = re.compile(r"valeur|inventaire")
 
 # Marque interne d'un `<br>` dans une cellule, le temps du parsing. Elle ne survit pas à
@@ -148,9 +93,7 @@ def _first_data_row(table: Table) -> int:
 def _canonical_width(table: Table) -> int:
     """Largeur du tableau, mesurée sur les seules lignes porteuses de plusieurs cellules.
 
-    Une ligne-label — un intertitre de section, seule cellule non vide de sa ligne — ne
-    doit pas fixer la largeur : certains moteurs la placent en fin de ligne, ce qui
-    ajouterait autant de colonnes fantômes à tout le tableau.
+    Une ligne-label ne doit pas fixer la largeur : cf. README.
 
     Args:
         table: grille brute.
@@ -165,12 +108,8 @@ def _canonical_width(table: Table) -> int:
 def _covering_label_index(parent: list[str]) -> int | None:
     """Position, dans une ligne d'en-tête, du libellé qui couvre plusieurs colonnes.
 
-    Deux signaux, dans cet ordre. Le premier est lexical — le vocabulaire du tableau
-    réglementaire, seul en-tête à sous-colonnes de ce corpus. Le second ne suppose aucun
-    vocabulaire : quand la ligne parente n'offre qu'un seul libellé susceptible de
-    couvrir des sous-colonnes, il n'y a rien à trancher. La première colonne en est
-    exclue : elle porte les raisons sociales, et y placer les sous-libellés reviendrait à
-    qualifier la colonne des libellés de lignes.
+    Deux signaux, dans cet ordre : lexical, puis « seul candidat de la ligne ». La première
+    colonne en est exclue, elle porte les raisons sociales. Cf. README.
 
     Args:
         parent: ligne d'en-tête, courte des cellules de continuation du libellé couvrant.
@@ -191,9 +130,8 @@ def _covering_label_index(parent: list[str]) -> int | None:
 def _continuation_run_index(parent: list[str], k: int) -> int | None:
     """Position du libellé suivi d'exactement `k - 1` cellules de continuation vides.
 
-    Cas du moteur qui a bien émis les cellules de continuation du libellé couvrant, mais
-    livre quand même la sous-ligne à plat. Le trou dans la ligne parente désigne alors la
-    position sans avoir à interpréter le moindre libellé.
+    Le trou dans la ligne parente désigne la position sans interpréter aucun libellé :
+    cf. README.
 
     Args:
         parent: ligne d'en-tête, déjà à la largeur du tableau.
@@ -214,19 +152,10 @@ def _continuation_run_index(parent: list[str], k: int) -> int | None:
 def _align_header_subrows(table: Table, width: int) -> Table:
     """Replace une sous-ligne d'en-tête sous le libellé qu'elle détaille.
 
-    Deux configurations produisent une sous-ligne mal placée, selon que le moteur a émis
-    ou non les cellules de continuation du libellé couvrant :
-
-    - **ligne parente courte de `k - 1`** : les continuations manquent, un libellé couvre
-      donc `k` colonnes. La ligne parente est écartée pour laisser la place, et la
-      sous-ligne posée sous le libellé identifié par `_covering_label_index` ;
-    - **ligne parente déjà à la largeur du tableau** : les continuations sont là, le trou
-      qu'elles forment désigne la position (`_continuation_run_index`).
-
-    Sans ce traitement, la sous-ligne est complétée à droite et atterrit en colonnes
-    0..k-1 — donc sous les mauvais en-têtes, ce qui fausse l'appariement de toutes les
-    colonnes du tableau. Quand la position ne peut pas être tranchée, le repli à droite
-    s'applique : mieux vaut le comportement connu qu'un placement arbitraire.
+    Deux configurations, selon que le moteur a émis ou non les cellules de continuation du
+    libellé couvrant : ligne parente courte de `k - 1` (`_covering_label_index`), ou déjà à
+    la largeur du tableau (`_continuation_run_index`). Quand la position ne peut pas être
+    tranchée, le repli à droite s'applique. Ce que ce traitement évite : cf. README.
 
     Args:
         table: grille brute.
@@ -278,9 +207,7 @@ def _normalize_grid(table: Table) -> Table:
     normalized: Table = []
     for row in rows:
         label = _label_index(row)
-        # Un intertitre occupe la ligne entière : sa colonne d'origine ne porte aucune
-        # information, et la conserver au-delà de la largeur du tableau ajouterait des
-        # colonnes vides à toutes les autres lignes.
+        # Un intertitre occupe la ligne entière : sa colonne d'origine ne porte rien.
         if label is not None and len(row) > width:
             normalized.append([row[label]] + [""] * (width - 1))
         else:
@@ -291,18 +218,8 @@ def _normalize_grid(table: Table) -> Table:
 def _stacked_parts(row: list[str]) -> list[list[str]] | None:
     """La ligne empile-t-elle plusieurs enregistrements, un par ligne physique ?
 
-    Certains tableaux composent un enregistrement sur deux lignes sans filet entre elles,
-    l'en-tête l'annonçant sur deux niveaux : « Dénomination / Siège Social », « Capital /
-    Capitaux Propres », « Val. brute Titres / Val. nette Titres »
-    (`_0334_394331946_TAB`). Les moteurs rendent alors une seule `<tr>` dont chaque
-    cellule porte ses deux valeurs séparées par un `<br>` — lecture fidèle de la page,
-    mais l'annotation, elle, garde une ligne par ligne physique.
-
-    La signature doit rester étroite : un libellé simplement replié en fin de ligne porte
-    lui aussi un `<br>`, et le couper en deux lignes serait faux. Trois conditions donc,
-    qu'une cellule isolée ne peut pas remplir — plusieurs cellules coupées, toutes du même
-    nombre de parties, et au moins deux d'entre elles empilant deux nombres. Sur le corpus
-    `reprise/`, 9 lignes sur 1 209 chez chandra et 10 sur 1 234 chez marker.
+    Signature volontairement étroite — plusieurs cellules coupées, toutes du même nombre de
+    parties, et au moins deux d'entre elles empilant deux nombres : cf. README.
 
     Args:
         row: ligne brute, cellules portant encore leurs marques `_BR`.
@@ -321,10 +238,9 @@ def _stacked_parts(row: list[str]) -> list[list[str]] | None:
 def _split_stacked_rows(table: Table) -> Table:
     """Rend chaque `<br>` d'une cellule, soit à une espace, soit à une coupure de ligne.
 
-    L'espace est le comportement par défaut, celui d'un libellé replié en fin de ligne :
-    sans elle, les mots de deux lignes se soudent (« Prêts etavancesconsentispar
-    laSociété »). La coupure ne s'applique qu'aux lignes que `_stacked_parts` reconnaît,
-    et une cellule non coupée y garde sa valeur sur la première ligne produite.
+    L'espace est le comportement par défaut ; la coupure ne s'applique qu'aux lignes que
+    `_stacked_parts` reconnaît, et une cellule non coupée y garde sa valeur sur la première
+    ligne produite. Pourquoi ces deux sorts : cf. README.
 
     Args:
         table: grille brute sortie du parseur, marques `_BR` comprises.
@@ -347,10 +263,8 @@ def _split_stacked_rows(table: Table) -> Table:
 def _rectangularize(table: Table) -> Table:
     """Complète les lignes courtes pour que toutes aient la largeur de la plus longue.
 
-    Chaque extracteur rend une grille rectangulaire : c'est ici, et seulement ici, que
-    l'on sait d'où viennent les cellules manquantes. `_load_csv` côté évaluation ne voit
-    qu'un CSV et ne peut que compléter à droite — laisser la grille irrégulière revient
-    donc à lui déléguer une décision de structure qu'il n'a pas les moyens de prendre.
+    C'est ici, et seulement ici, que l'on sait d'où viennent les cellules manquantes :
+    cf. README.
 
     Args:
         table: grille éventuellement irrégulière.
@@ -391,9 +305,9 @@ class MarkerTableExtractor(TableExtractor):
             block: bloc `Table` ou `TableGroup`.
 
         Returns:
-            Une grille par `<table>` du fragment HTML. Un fragment sans balise `<table>`
-            est enveloppé dans une ligne artificielle : s'il ne porte aucune cellule — le
-            cas des blocs vides et des `<content-ref>` — il ne produit aucune grille.
+            Une grille par `<table>` du fragment HTML. Un fragment sans balise `<table>` est
+            enveloppé dans une ligne artificielle, et n'en produit aucune s'il ne porte pas
+            de cellule (cf. README).
         """
         html = block.get("html", "")
         if "<table" not in html.lower():
@@ -404,9 +318,7 @@ class MarkerTableExtractor(TableExtractor):
         """Blocs de tableau du document, dans l'ordre de lecture.
 
         Un `TableGroup` dont la descendance porte des blocs `Table` est écarté au profit de
-        ceux-ci : son `html` ne contient en principe que des pointeurs `<content-ref>`,
-        mais rien dans le format ne le garantit, et le retenir en plus de ses enfants
-        dupliquerait le tableau.
+        ceux-ci : cf. README.
 
         Args:
             node: racine du JSON marker, ou tout sous-arbre.
@@ -442,9 +354,8 @@ class MarkerTableExtractor(TableExtractor):
 def _normalize_chandra_table(table: Table) -> Table | None:
     """Écarte un tableau Chandra sans données, met les autres en forme.
 
-    La mise en forme est celle de `_normalize_grid`, commune à tous les moteurs. Seul le
-    rejet est propre à chandra : ses pages produisent des blocs qui ne sont pas des
-    tableaux, et un bloc dont aucune ligne ne porte deux cellules n'en est pas un.
+    La mise en forme est commune à tous les moteurs ; seul le rejet est propre à chandra
+    (cf. README).
 
     Args:
         table: tableau brut d'une page chandra.
@@ -477,13 +388,9 @@ class ChandraTableExtractor(TableExtractor):
       ]
     }
 
-    Le premier porte les fusions (`colspan`, `rowspan`), les `<br>` et le découpage en
-    blocs de mise en page : il emprunte le parseur de marker, donc le même traitement
-    déterministe des fusions, et son balisage permet de recoller les blocs d'un même
-    tableau (`_merge_chandra_blocks`). Le second a tout perdu — la conversion ne peut que
-    replacer les sous-lignes d'en-tête au mieux (`_align_header_subrows`), et n'a rien
-    pour recoller quoi que ce soit. Les deux restent lus : les JSON déjà déposés sur S3
-    sont au format historique.
+    Le premier emprunte le parseur de marker et permet le recollage des blocs ; le second a
+    tout perdu. Les deux restent lus, les JSON déjà déposés sur S3 étant au format
+    historique. Cf. README.
     """
 
     def extract(self, data: dict) -> list[Table]:
@@ -532,14 +439,10 @@ class OpenDataLoaderTableExtractor(TableExtractor):
 
 # ── Balisage des blocs chandra ────────────────────────────────────────────────
 
-# Chandra rend une page comme une suite de `<div data-label=...>` — `Table`,
-# `Section-Header`, `Text`… — jamais imbriqués, et coupe une région `Table` dès qu'un
-# autre bloc l'interrompt. Un tableau que traverse un intertitre de section ressort donc
-# en plusieurs `<table>`. Mesuré sur les 88 tableaux du corpus `reprise/` : 73 blocs
-# complets, et 14 blocs incomplets concentrés sur les seuls fichiers sur-découpés.
-# Le modèle ne recolle rien et n'annonce aucune continuation, mais son balisage dit
-# lequel de ces blocs est un tableau entier — c'est ce que lisent `_Markup` et
-# `_merge_chandra_blocks`.
+# Chandra coupe une région `Table` dès qu'un autre bloc l'interrompt : un tableau que
+# traverse un intertitre ressort en plusieurs `<table>`. Le modèle n'annonce aucune
+# continuation, mais son balisage dit lequel de ces blocs est un tableau entier — c'est ce
+# que lisent `_Markup` et `_merge_chandra_blocks`. Mesures et règles : cf. README.
 
 
 @dataclass
@@ -547,13 +450,10 @@ class _Markup:
     """Ce que le balisage d'un `<table>` dit de sa complétude.
 
     Attributes:
-        has_column_header: le tableau porte une ligne d'en-tête de colonnes, c'est-à-dire
-            plusieurs `th` sur une même ligne. Un `th` unique en `colspan` pleine largeur
-            est un intertitre de section — chandra en met dans le `thead` — et ne compte
-            donc pas : le prendre pour un en-tête ferait passer une suite de tableau pour
-            un tableau autonome.
-        has_data_row: le tableau porte au moins une ligne de `td`. Un bloc qui n'a que
-            son en-tête est un tableau inachevé, que la suite de la page complète.
+        has_column_header: plusieurs `th` sur une même ligne. Un `th` unique en `colspan`
+            pleine largeur est un intertitre et ne compte pas (cf. README).
+        has_data_row: le tableau porte au moins une ligne de `td`. Un bloc qui n'a que son
+            en-tête est un tableau inachevé, que la suite de la page complète.
     """
 
     has_column_header: bool = False
@@ -566,8 +466,7 @@ class _Block:
 
     Attributes:
         label: `data-label` du bloc, ou "" pour un `<table>` hors de tout bloc étiqueté —
-            chandra omet parfois `data-label` (`380129866`), la conversion ne peut donc
-            pas en dépendre pour trouver ses tableaux.
+            chandra omet parfois l'étiquette (cf. README).
         bbox: `data-bbox` (x0, y0, x1, y1), ou None si absent ou illisible.
         text: texte du bloc hors tableaux, `<br>` ramenés à des espaces.
         tables: grilles brutes portées par le bloc, non normalisées.
@@ -607,12 +506,8 @@ def _read_bbox(value: str | None) -> tuple[int, int, int, int] | None:
 def _straddles_top(header: _Block, table: _Block) -> bool:
     """L'intertitre déborde-t-il sur le haut du tableau qui le suit ?
 
-    Chandra sort parfois un libellé de ligne hors du tableau : sur `411373525`, chaque
-    raison sociale part dans un bloc `Section-Header` et seule l'adresse reste dans la
-    ligne. Le bloc chevauche alors le bord supérieur du tableau — il commence au-dessus
-    et finit dedans — là où un titre de tableau s'arrête avant. Le recouvrement
-    horizontal est exigé en plus : sur une page en paysage, un titre latéral couvre
-    toute la hauteur du tableau sans rien avoir à y faire.
+    Le bloc doit commencer au-dessus du tableau et finir dedans, et le recouvrir
+    horizontalement : cf. README.
 
     Args:
         header: bloc `Section-Header`.
@@ -631,17 +526,8 @@ def _straddles_top(header: _Block, table: _Block) -> bool:
 def _continues(group: Table, group_has_data: bool, table: Table, markup: _Markup) -> bool:
     """Le tableau prolonge-t-il celui en cours, ou en ouvre-t-il un autre ?
 
-    Deux lectures du balisage, à largeur de colonnes identique — condition nécessaire,
-    un tableau coupé en largeur ne se recolle jamais par lignes :
-
-    - le bloc n'a pas d'en-tête de colonnes propre : il reprend en pleine matière, donc
-      sous l'en-tête du bloc précédent ;
-    - le tableau en cours n'a pas encore de ligne de données : c'est un en-tête orphelin,
-      que ce bloc-ci complète.
-
-    Un bloc qui réimprime un vrai en-tête de colonnes n'entre dans aucun des deux cas et
-    reste un tableau distinct : sur une même page, un en-tête répété désigne deux
-    tableaux de même forme (`_1465_652027384_TAB`), pas une suite.
+    Deux lectures du balisage, à largeur de colonnes identique : le bloc n'a pas d'en-tête
+    propre, ou le tableau en cours n'a pas encore de ligne de données. Cf. README.
 
     Args:
         group: grille du tableau en cours de constitution.
@@ -660,10 +546,8 @@ def _continues(group: Table, group_has_data: bool, table: Table, markup: _Markup
 def _running_titles(pages: list[list[_Block]]) -> set[str]:
     """Textes que le document porte en titre courant, quelle que soit la page.
 
-    Chandra n'étiquette pas ces textes de la même façon partout : sur `411373525`, la
-    page 2 les donne en `Page-Header` et la page 1 en `Section-Header`, à texte identique.
-    Un intertitre qui apparaît ailleurs comme titre ou pied de page n'appartient donc pas
-    au tableau, et le verser en ligne-label ajoute des lignes que l'annotation n'a pas.
+    Chandra ne les étiquette pas de la même façon partout : un intertitre vu ailleurs comme
+    titre ou pied de page n'appartient pas au tableau (cf. README).
 
     Args:
         pages: blocs de chaque page du document.
@@ -682,17 +566,10 @@ def _running_titles(pages: list[list[_Block]]) -> set[str]:
 def _merge_chandra_blocks(blocks: list[_Block], titles: set[str] = frozenset()) -> list[Table]:
     """Recolle les blocs d'une page chandra en tableaux, intertitres réinjectés.
 
-    Le recollage est borné à la page : chandra est appelé page par page et l'annotation
-    suit cette granularité, un tableau par page. Il précède la normalisation, la largeur
-    canonique et le placement des sous-lignes d'en-tête se lisant mieux sur le tableau
-    entier que sur un fragment de fin de section.
-
-    Le texte des blocs `Section-Header` est rendu au tableau, faute de quoi il est perdu :
-    il est hors de toute balise `<table>`. Deux sorts selon la géométrie et le balisage —
-    collé en tête de la première cellule quand le bloc chevauche le haut du tableau
-    (`_straddles_top`), sinon posé en ligne-label, mais seulement devant un bloc sans
-    en-tête de colonnes propre. Devant un bloc qui a le sien, c'est le titre du tableau
-    et non une de ses lignes : l'annotation ne le porte pas non plus.
+    Le recollage est borné à la page, et précède la normalisation : la largeur canonique se
+    lit mieux sur le tableau entier que sur un fragment. Le texte des `Section-Header` est
+    rendu au tableau, collé en tête de première cellule (`_straddles_top`) ou posé en
+    ligne-label. Cf. README.
 
     Args:
         blocks: blocs d'une page, dans l'ordre de lecture.
@@ -709,8 +586,7 @@ def _merge_chandra_blocks(blocks: list[_Block], titles: set[str] = frozenset()) 
         if not block.tables:
             if _norm(block.text).strip() in titles:
                 continue
-            # Un bloc sans tableau qui n'est pas un intertitre rompt le voisinage : un
-            # intertitre séparé de son tableau par un paragraphe ne lui appartient plus.
+            # Un bloc sans tableau qui n'est pas un intertitre rompt le voisinage.
             pending = pending + [block] if block.label == "Section-Header" else []
             continue
 
@@ -742,25 +618,13 @@ class _TableHTMLParser(HTMLParser):
     """Convertit un tableau HTML en matrice de chaînes, fusions comprises.
 
     Les fusions étant traitées ligne par ligne, une ligne dont le HTML compte moins de
-    cellules que les autres ressort plus courte : c'est `_parse_html_tables` qui achève
-    la grille en la passant par `_rectangularize`.
+    cellules que les autres ressort plus courte : c'est `_parse_html_tables` qui achève la
+    grille en la passant par `_rectangularize`.
 
-    `colspan` est développé en cellules vides à droite ; `rowspan` est reporté sur les
-    lignes suivantes via `_carried`. Sans ce report, chaque ligne suivant une cellule
-    fusionnée verticalement perd une cellule et tout ce qui la suit glisse d'un cran à
-    gauche — décalage qui se propage ensuite à l'ensemble du tableau. Les en-têtes des
-    tableaux de filiales et participations en dépendent : 77 % des documents marker du
-    corpus contiennent au moins un `rowspan`.
-
-    Une cellule fusionnée ne porte sa valeur qu'à sa position d'origine ; les positions
-    de continuation reçoivent une chaîne vide, dans les deux directions. C'est la
-    convention des annotations de référence, où une fusion Excel n'écrit la valeur que
-    dans sa première cellule, et celle déjà appliquée à `colspan`.
-
-    Le choix n'est pas cosmétique : mesuré sur les 69 paires du corpus `reprise/`, il
-    porte la récupération numérique de 42,0 % (sans report) à 48,4 %, tandis que
-    répéter la valeur sur les lignes couvertes la fait tomber à 29,7 % — un libellé
-    dupliqué rend les lignes indiscernables à l'appariement des en-têtes.
+    `colspan` est développé en cellules vides à droite, `rowspan` reporté sur les lignes
+    suivantes via `_carried`. Une cellule fusionnée ne porte sa valeur qu'à sa position
+    d'origine, les continuations reçoivent une chaîne vide — dans les deux directions. Ce
+    que ce choix vaut, mesures à l'appui : cf. README.
     """
 
     def __init__(self):
@@ -841,10 +705,8 @@ class _TableHTMLParser(HTMLParser):
         Args:
             implicite: la fermeture est déduite d'une balise ouvrante, non écrite dans le
                 document. Une ligne implicite sans aucun contenu est alors **abandonnée
-                sans décompter les fusions en cours** : elle ne vient pas d'une ligne du
-                tableau mais d'un `<tr>` en double (« `<tr> <tr> <td…` », dix annotations
-                du corpus historique). La compter ferait consommer une ligne de `rowspan`
-                à un rang qui n'existe pas, et décalerait tout ce qui suit.
+                sans décompter les fusions en cours** : elle vient d'un `<tr>` en double,
+                pas d'une ligne du tableau (cf. README).
         """
         # Fin de ligne implique fin de cellule : sans cela, un `<td>` non refermé en fin de
         # ligne serait écrit dans la ligne suivante, qu'il décalerait d'un cran.
@@ -878,10 +740,8 @@ class _TableHTMLParser(HTMLParser):
         self._fill_carried()
 
     # Les balises ouvrantes ci-dessous referment ce qui doit l'être, comme le fait
-    # l'algorithme de parsing HTML5 : un `<tr>` implique la fermeture de la ligne ouverte,
-    # un `<td>` celle de la cellule ouverte, et une cellule hors ligne en ouvre une. Les
-    # annotations saisies à la main en ont besoin — dix des quarante du corpus historique
-    # portent une balise en trop ou en moins — et un navigateur les lit ainsi.
+    # l'algorithme de parsing HTML5 : un `<tr>` ferme la ligne ouverte, un `<td>` la cellule
+    # ouverte, et une cellule hors ligne en ouvre une. Pourquoi cette tolérance : cf. README.
 
     def handle_starttag(self, tag, attrs):
         if tag in ("th", "td"):
@@ -937,12 +797,8 @@ class _TableHTMLParser(HTMLParser):
     def close(self):
         """Termine le parsing, en publiant un `<table>` que le document n'a pas fermé.
 
-        Un HTML tronqué — annotation saisie à la main, sortie de VLM coupée par sa limite
-        de jetons — laisse le `</table>` manquant. Sans cette reprise, tout ce qui a été lu
-        est perdu et le fichier disparaît de la mesure au lieu d'y figurer pour ce qu'il
-        vaut. C'est aussi ce que fait un navigateur, qui referme les balises ouvertes en
-        fin de flux. Mesuré sur les 96 JSON du corpus `reprise/`, aucun n'a de `<table>`
-        non fermé : la reprise n'y change rien.
+        Cas d'un HTML tronqué — annotation saisie à la main, sortie de VLM coupée par sa
+        limite de jetons. Cf. README.
         """
         super().close()
         if self._in_table:
@@ -967,15 +823,10 @@ def _parse_html_tables(html: str) -> list[Table]:
 class _ChandraPageParser(_TableHTMLParser):
     """Découpe une page chandra en blocs de mise en page, tableaux rattachés.
 
-    Le découpage sert à deux choses que le contenu des `<table>` ne dit pas : borner le
-    recollage à la page et à ses blocs voisins, et récupérer le texte des intertitres,
-    qui appartient au tableau sans être dedans.
-
-    Les blocs de chandra ne s'imbriquent jamais — vérifié sur les 55 pages du corpus,
-    profondeur de `div` maximale de 1 : un bloc court donc jusqu'à l'ouverture du
-    suivant. Le rattachement ne peut pas pour autant reposer sur l'étiquetage seul,
-    `380129866` sortant ses `div` avec un `data-bbox` en double et aucun `data-label` :
-    un `<table>` hors de tout bloc étiqueté forme son propre bloc, sans voisinage.
+    Le découpage borne le recollage et récupère le texte des intertitres, qui appartient au
+    tableau sans être dedans. Les blocs ne s'imbriquant jamais, un bloc court jusqu'à
+    l'ouverture du suivant ; un `<table>` hors de tout bloc étiqueté forme son propre bloc,
+    sans voisinage. Cf. README.
     """
 
     def __init__(self):
@@ -1055,6 +906,14 @@ def _to_csv_bytes(table: Table) -> bytes:
 
 # ── Pipeline S3 ───────────────────────────────────────────────────────────────
 
+# Le format d'une sortie tient au moteur qui l'a produite, pas au corpus : c'est parmi ces
+# noms que la clé `extracteur` d'un moteur configuré choisit son lecteur.
+EXTRACTORS: dict[str, TableExtractor] = {
+    "marker": MarkerTableExtractor(),
+    "opendataloader": OpenDataLoaderTableExtractor(),
+    "chandra": ChandraTableExtractor(),
+}
+
 
 def _load(fs: s3fs.S3FileSystem, path: str, ext: str):
     """Charge un fichier S3 : renvoie un dict (JSON) ou une str (HTML)."""
@@ -1092,20 +951,19 @@ def _stale_csv_paths(existing: list[str], siren: str, kept: int) -> list[str]:
 
 
 def run_pipeline(method: str, fs: s3fs.S3FileSystem, overwrite: bool = False) -> None:
-    cfg = SOURCES[method]
-    ext = cfg["ext"]
-    strip_prefix = cfg.get("strip_prefix", "")
-    extractors: dict[str, TableExtractor] = {
-        "marker": MarkerTableExtractor(),
-        "marker_last_work": MarkerTableExtractor(),
-        "opendataloader": OpenDataLoaderTableExtractor(),
-        "chandra": ChandraTableExtractor(),
-    }
-    # Une entrée de SOURCES est un couple (corpus, moteur) : `extractor` dit lequel des
-    # extracteurs la lit, et ne vaut la peine d'être écrit que si le nom diffère.
-    extractor = extractors[cfg.get("extractor", method)]
+    """Convertit en CSV toutes les sorties brutes d'une méthode.
 
-    input_files = sorted(fs.glob(f"{cfg['input']}/*{ext}"))
+    Args:
+        method: clé de `SOURCES`, c'est-à-dire un couple (corpus, moteur).
+        fs: système de fichiers S3.
+        overwrite: réécrire les CSV déjà présents, et supprimer les rangs surnuméraires.
+    """
+    cfg = SOURCES[method]
+    ext = cfg.extension
+    strip_prefix = cfg.retirer_prefixe
+    extractor = EXTRACTORS[cfg.extracteur]
+
+    input_files = sorted(fs.glob(f"{cfg.json}/*{ext}"))
     print(f"[{method}] {len(input_files)} fichier(s) trouvé(s)\n")
 
     ok = skipped = 0
@@ -1114,7 +972,7 @@ def run_pipeline(method: str, fs: s3fs.S3FileSystem, overwrite: bool = False) ->
     for file_key in input_files:
         raw_stem = Path(file_key).stem
         siren = raw_stem.removeprefix(strip_prefix) if strip_prefix else raw_stem
-        if not overwrite and fs.exists(f"{cfg['output']}/{siren}_1.csv"):
+        if not overwrite and fs.exists(f"{cfg.csv}/{siren}_1.csv"):
             print(f"  [SKIP]  {siren}")
             skipped += 1
             continue
@@ -1133,11 +991,9 @@ def run_pipeline(method: str, fs: s3fs.S3FileSystem, overwrite: bool = False) ->
             continue
 
         for i, table in enumerate(tables, start=1):
-            fs.pipe(f"{cfg['output']}/{siren}_{i}.csv", _to_csv_bytes(table))
+            fs.pipe(f"{cfg.csv}/{siren}_{i}.csv", _to_csv_bytes(table))
         if overwrite:
-            for path in _stale_csv_paths(
-                fs.glob(f"{cfg['output']}/{siren}_*.csv"), siren, len(tables)
-            ):
+            for path in _stale_csv_paths(fs.glob(f"{cfg.csv}/{siren}_*.csv"), siren, len(tables)):
                 fs.rm(path)
 
         print(f"  [OK]    {siren}: {len(tables)} tableau(x)")
@@ -1162,12 +1018,17 @@ def run_pipeline(method: str, fs: s3fs.S3FileSystem, overwrite: bool = False) ->
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Conversion JSON → CSV (Marker / OpenDataLoader)")
+    parser = argparse.ArgumentParser(description="Conversion des sorties de moteurs en CSV")
     parser.add_argument(
         "--method",
         choices=[*SOURCES, "all"],
         default="all",
-        help="Source à convertir (défaut : all)",
+        help="Méthode à convertir, c'est-à-dire un couple corpus × moteur (défaut : all)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="énumérer les méthodes configurées, avec leurs préfixes S3",
     )
     parser.add_argument(
         "--overwrite",
@@ -1179,6 +1040,12 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    if args.list:
+        largeur = max(len(m) for m in SOURCES)
+        for nom, moteur in SOURCES.items():
+            print(f"  {nom:<{largeur}}  [{moteur.corpus}]  {moteur.json}  →  {moteur.csv}")
+        return
 
     fs = get_s3_fs()
     methods = list(SOURCES) if args.method == "all" else [args.method]

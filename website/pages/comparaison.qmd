@@ -55,6 +55,9 @@ la structure vers la lecture.
 :::
 
 ```{=html}
-<script>window.DX_SOURCE = "data/comparaisons.json";</script>
-<script src="comparateur.js"></script>
+<script>
+  window.DX_SOURCE = "data/comparaisons.json";
+  window.DX_BASE = "../";
+</script>
+<script src="../js/comparateur.js"></script>
 ```

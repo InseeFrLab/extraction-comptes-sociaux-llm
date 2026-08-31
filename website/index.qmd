@@ -51,7 +51,7 @@ travail.
   <div class="dx-flow-step">
     <span class="dx-flow-name">3. Évaluation</span>
     <span class="dx-flow-desc">
-      <span class="dx-flow-code">evaluation_extraction.py</span> confronte chaque CSV au
+      <span class="dx-flow-code">evaluation.py</span> confronte chaque CSV au
       tableau annoté à la main (format XLSX) : zones d'en-tête délimitées, libellés et nombres
       normalisés, lignes et colonnes appariées, cellules comparées.</span>
   </div>
@@ -86,29 +86,29 @@ une image et non un PDF, la référence est du HTML et non un XLSX, et seul chan
 joué — marker demande un GPU. Le résultat y est nettement plus dur : **92,6 % des valeurs
 attendues sont lues, mais 32,8 % seulement arrivent dans la bonne cellule**, contre 83 % sur
 les comptes sociaux. Le détail est sur la page
-[Résultats — tableaux historiques](resultats-historiques.qmd), les grilles sur
-[Comparaison — tableaux historiques](comparaison-historiques.qmd).
+[Résultats — tableaux historiques](pages/resultats-historiques.qmd), les grilles sur
+[Comparaison — tableaux historiques](pages/comparaison-historiques.qmd).
 
 
 ## Les pages du site
 
-- [**Architecture**](architecture.qmd) : les deux moteurs, les services qui les servent,
+- [**Architecture**](pages/architecture.qmd) : les deux moteurs, les services qui les servent,
   et de vrais exemples de leur sortie sur le même PDF.
-- [**Du JSON au CSV**](conversion.qmd) : les six étapes qui transforment la sortie d'un
+- [**Du JSON au CSV**](pages/conversion.qmd) : les six étapes qui transforment la sortie d'un
   moteur en grille de lignes et de colonnes.
-- [**Évaluation**](evaluation.qmd) : comment une paire est constituée, ce qui est
+- [**Évaluation**](pages/evaluation.qmd) : comment une paire est constituée, ce qui est
   normalisé, comment lignes et colonnes sont appariées, et ce que valent les quatre
   métriques.
-- [**Résultats**](resultats.qmd) : l'ensemble des mesures sur les comptes sociaux :
+- [**Résultats**](pages/resultats.qmd) : l'ensemble des mesures sur les comptes sociaux :
   attrition, catégories d'erreur, effet de la taille, cas pathologiques, limites.
-- [**Résultats — tableaux historiques**](resultats-historiques.qmd) : les mêmes mesures sur
+- [**Résultats — tableaux historiques**](pages/resultats-historiques.qmd) : les mêmes mesures sur
   le second corpus, et les deux causes d'échec qui lui sont propres.
-- [**Problèmes de mise en forme**](mise-en-forme.qmd) : quand l'annotation et le moteur
+- [**Problèmes de mise en forme**](pages/mise-en-forme.qmd) : quand l'annotation et le moteur
   écrivent le même tableau autrement, et que la mesure compte une perte à tort.
-- [**Améliorations**](ameliorations.qmd) : cinq leviers classés par gain mesuré.
-- [**Comparaison des tableaux**](comparaison.qmd) : grille annotée face à grille
+- [**Améliorations**](pages/ameliorations.qmd) : cinq leviers classés par gain mesuré.
+- [**Comparaison des tableaux**](pages/comparaison.qmd) : grille annotée face à grille
   extraite, cellule par cellule, sur les 148 paires des comptes sociaux — et
-  [sur les 38 paires](comparaison-historiques.qmd) des tableaux historiques.
+  [sur les 38 paires](pages/comparaison-historiques.qmd) des tableaux historiques.
 
 ::: {.callout-note appearance="simple"}
 ## Données affichées

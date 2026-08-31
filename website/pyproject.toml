@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "Site Quarto de diagnostic de l'extraction de tableaux"
 readme = "README.md"
 requires-python = ">=3.13"
-# Le site est statique : Quarto ne rend que du markdown et du JavaScript. Python ne
-# sert qu'à `build_data.py`, qui lit S3 et écrit data/comparaisons.json.
-# `evaluation_extraction` est importé depuis ../scripts par chemin, d'où pandas/numpy ici.
+# Le site est statique : Quarto ne rend que du markdown et du JavaScript. Python ne sert
+# qu'aux scripts de `scripts/` — `build_data*.py` (S3 → data/comparaisons*.json),
+# `chiffres_site.py` (les chiffres publiés par les pages) et `apercus.py` (les vignettes).
+# `evaluation` est importé depuis ../scripts par chemin, d'où pandas/numpy ici.
 dependencies = [
     "extraction-common",
     "pandas>=3.0.2",
@@ -14,6 +15,13 @@ dependencies = [
     "openpyxl>=3.1.0",   # lecture des annotations XLSX
     "s3fs>=2025.3.0",
     "python-dotenv>=1.2.2",
+    # `scripts/config.py`, importé en cascade, lit la configuration des corpus en YAML.
+    "pyyaml>=6.0.3",
+    # Imports réels de `scripts/apercus.py`, qui fabrique les vignettes des documents
+    # sources publiées par les pages « Comparaison » : pymupdf rend les pages des PDF de
+    # comptes sociaux, Pillow réduit et encode en JPEG. Rien d'autre ici n'en dépend.
+    "pymupdf>=1.27.2.2",
+    "pillow>=12.2.0",
 ]
 
 [tool.uv.sources]

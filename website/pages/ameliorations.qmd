@@ -172,7 +172,7 @@ cellules, mais des cellules qui décident d'un `total_extraction`.
   rendrait `4 139 €` égal à `4 139 USD` : une confusion de devise serait créditée comme une
   extraction juste. Le point gagné ne vaut pas ce risque.
 
-Reste aussi à unifier : `website/build_data.py` porte encore sa propre normalisation
+Reste aussi à unifier : `website/scripts/build_data.py` porte encore sa propre normalisation
 (`_norm_num`), qui *retire* les unités. Le site et l'évaluation divergent donc d'une
 quarantaine de cellules chez chandra. `build_data.py` devrait déléguer à l'évaluation, comme
 il le fait déjà pour toutes les autres fonctions.
@@ -342,7 +342,7 @@ des leviers seront illisibles.
 - **Faire déléguer `build_data.py` à l'évaluation.** Le site porte encore sa propre
   normalisation numérique, qui retire les unités là où l'évaluation ne le fait pas : une
   quarantaine de cellules chandra sont classées différemment de part et d'autre. Une seule
-  définition, dans `evaluation_extraction.py`.
+  définition, dans `evaluation.py`.
 - **Rendre visible l'absence d'une méthode déclarée.** `opendataloader` figure dans `METHODS`
   mais ne produit aucun CSV : il disparaît du parquet sans avertissement. Soit il sort du
   périmètre, soit l'évaluation lève un avertissement explicite. Sur ses 48 sorties HTML, 12

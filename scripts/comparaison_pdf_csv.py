@@ -2,12 +2,12 @@
 """
 Appariement des PDFs de tableaux et des annotations XLSX de référence, par SIREN.
 
-Sources :
-  s3://projet-extraction-tableaux/pdf/tableaux_representatifs/
-  s3://projet-extraction-tableaux/annotations/clean/
-Sortie :
-  s3://projet-extraction-tableaux/reprise/correspondances.parquet
-  (consommée ensuite par extraction_pdf_via_api.py et evaluation_extraction.py)
+Sources et sortie sont celles déclarées par `config/comptes-sociaux.yaml`, section
+`sources` : les PDF du corpus, les annotations XLSX, et le parquet de correspondances
+(consommé ensuite par extraction_pdf_via_api.py, evaluation.py et les aperçus du site).
+
+Ce que ce parquet fixe — un SIREN, plusieurs tableaux, un seul PDF — est expliqué dans
+[README.md](README.md).
 
 Usage :
     uv run comparaison_pdf_csv.py
@@ -19,9 +19,13 @@ from pathlib import Path
 import pandas as pd
 from extraction_common.s3 import get_s3_fs
 
-PATH_XLSX = "s3://projet-extraction-tableaux/annotations/clean/*.xlsx"
-PATH_PDF = "s3://projet-extraction-tableaux/pdf/tableaux_representatifs/*.pdf"
-OUTPUT_PATH = "s3://projet-extraction-tableaux/reprise/correspondances.parquet"
+import config
+
+CONFIG = config.charger("comptes-sociaux")
+
+PATH_XLSX = f"{CONFIG.annotations}/*.xlsx"
+PATH_PDF = f"{CONFIG.sources['pdf']}/*.pdf"
+OUTPUT_PATH = CONFIG.sources["correspondances"]
 
 # Suffixe _1, _2… ajouté quand un SIREN porte plusieurs tableaux annotés.
 _SUFFIXE_RE = re.compile(r"_\d+$")

@@ -66,7 +66,9 @@ la structure vers la lecture.
 ```{=html}
 <script>
   window.DX_SOURCE = "data/comparaisons-historiques.json";
-  window.DX_REBUILD = "uv run --project website python website/build_data_historiques.py";
+  window.DX_BASE = "../";
+  window.DX_REBUILD =
+    "uv run --project website python website/scripts/build_data_historiques.py";
 </script>
-<script src="comparateur.js"></script>
+<script src="../js/comparateur.js"></script>
 ```

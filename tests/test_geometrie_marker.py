@@ -1,4 +1,8 @@
-"""Tests du diagnostic géométrique, sans aucun accès S3.
+"""Tests du diagnostic géométrique (`legacy/geometrie_marker.py`), sans aucun accès S3.
+
+Le script est archivé — l'analyse est close, son résultat est publié par la page
+« Améliorations » du site — mais ces tests restent joués : ils ne coûtent rien et documentent
+la géométrie sur laquelle repose le levier 01, s'il faut y revenir.
 
 La logique testée est celle qui reconstruit une grille à partir des seules coordonnées :
 regroupement en bandes, choix de l'axe des lignes — une page en paysage non redressée

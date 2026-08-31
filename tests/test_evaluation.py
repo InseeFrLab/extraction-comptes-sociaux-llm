@@ -5,7 +5,7 @@ Ces fonctions conditionnent directement les métriques `numeric_recovery` et
 """
 
 import pytest
-from evaluation_extraction import (
+from evaluation import (
     _lev_similarity,
     _looks_numeric,
     _normalize_label,

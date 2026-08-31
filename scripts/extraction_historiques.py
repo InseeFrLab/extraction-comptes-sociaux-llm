@@ -2,62 +2,32 @@
 """
 Extraction du corpus « tableaux historiques » : images scannées → JSON chandra, vers S3.
 
-Ce corpus diffère de `reprise/` sur deux points, et c'est tout ce que ce script traite :
+Ce corpus diffère de `reprise/` sur trois points, et c'est tout ce que ce script traite :
 
-- **l'entrée est une image**, pas un PDF (TIFF ou PNG, un tableau par fichier, déjà rogné
-  sur le tableau). Elle est postée telle quelle au champ `image` de `api_chandra`, qui
-  l'envoie au VLM sans la faire passer par un PDF ;
-- **plusieurs conditions sont comparées** : `chandra`, notre appel direct, et les variantes
-  qui en bougent un réglage à la fois — prompt, plafond de sortie, relances. Elles écrivent
-  dans des préfixes séparés (`MOTEURS`), et la suite de la chaîne les traite à l'identique ;
+- **l'entrée est une image**, pas un PDF (TIFF ou PNG, un tableau par fichier, déjà rogné).
+  Elle est postée telle quelle au champ `image` de `api_chandra` : une image n'a pas de dpi,
+  et le réglage est un nombre de pixels (`--cote-max`) ;
+- **plusieurs conditions sont comparées** — un réglage change, le reste est identique. Elles
+  écrivent dans des préfixes séparés et sont déclarées dans `config/historiques.yaml` ;
 - **il n'y a pas de parquet de correspondances** : l'appariement avec l'annotation se fait
   par le nom de fichier (`crop_1970_bis.tiff` ↔ `ground_truth_1970_bis.html`).
 
-    s3://projet-extraction-tableaux/pdf/tableaux historiques/*.{tiff,png}
-      → s3://projet-extraction-tableaux/tableaux_historiques/output_chandra/{stem}.json
+Le JSON déposé est celui de `api_chandra`, format inchangé : `json_to_csv.py --method
+chandra_historiques` le convertit ensuite avec le même extracteur que l'autre corpus.
 
-Le JSON déposé est celui de `api_chandra`, format inchangé : `scripts/json_to_csv.py
---method chandra_historiques` le convertit ensuite en CSV avec le même extracteur que le
-corpus des comptes sociaux.
+Démarrage de l'API et choix du pipeline : [README.md](README.md). Ce que `cote_max` décide
+et pourquoi il vaut 2 200 px : [api/api_chandra/README.md](../api/api_chandra/README.md).
 
-═══════════════════════════════════════════════════════════════
- DÉMARRAGE DE L'API
-═══════════════════════════════════════════════════════════════
-
-`api_chandra` relaie vers le VLM distant : aucun GPU local n'est nécessaire.
-
-    cd api/api_chandra
-    CHANDRA_API_KEY="$REAL_LLM_API_KEY" \
-      uv run uvicorn main_chandra:app --host 127.0.0.1 --port 8003 --app-dir src
-
-Aucune variable de résolution à poser : `CHANDRA_DPI` ne concerne que les PDF. Ce qui
-décide de ce que le modèle voit est le nombre de pixels envoyés, et il est fixé ici par
-`--cote-max`, requête par requête.
-
-**Sur la résolution.** Les fichiers du corpus vont de 37 à 889 mégapixels et ne portent
-aucune résolution exploitable — le tag TIFF vaut `(1, 1)`, le tag PNG `96 dpi`, quand il
-existe. Un dpi n'est de toute façon pas définissable sur un rognage : il n'a pas de taille
-physique. Le réglage est donc exprimé en pixels de grand côté, la seule grandeur que le
-modèle consomme réellement.
-
-═══════════════════════════════════════════════════════════════
- USAGE DU SCRIPT
-═══════════════════════════════════════════════════════════════
-
+Usage :
     uv run extraction_historiques.py --all
     uv run extraction_historiques.py --all --moteur chandra_prompt_layout
     uv run extraction_historiques.py --all --overwrite     # rejoue les images déjà traitées
     uv run extraction_historiques.py --all --cote-max 0    # résolution native, sans réduction
     uv run extraction_historiques.py --image crop_1970.png
     uv run extraction_historiques.py --list                # inventaire et appariement
-
-  Variables d'environnement :
-    API_CHANDRA_URL   URL de api_chandra (défaut: http://localhost:8003)
-    AWS_*             cf. extraction_common.s3
 """
 
 import argparse
-import os
 
 import requests
 import s3fs
@@ -74,8 +44,6 @@ from dotenv import load_dotenv
 from extraction_common.s3 import get_s3_fs
 
 load_dotenv()
-
-API_URL = os.getenv("API_CHANDRA_URL", "http://localhost:8003")
 
 
 def list_images(fs: s3fs.S3FileSystem) -> dict[str, str]:
@@ -106,35 +74,28 @@ def list_annotations(fs: s3fs.S3FileSystem) -> dict[str, str]:
     return {key_from_annotation(p): p for p in sorted(fs.glob(f"{S3_ANNOTATIONS}/*.html"))}
 
 
-def _champs(moteur: str, cote_max: int, image_path: str) -> dict:
+def _champs(moteur: str, cote_max: int) -> dict:
     """Champs de formulaire de la requête, selon ce que le moteur demande.
 
-    Une clé absente laisse l'API décider : ni consigne, et le plafond de jetons et les
-    relances de ses variables d'environnement. Une condition d'expérience se déclare donc
-    entièrement dans `MOTEURS`, sans toucher à ce script.
+    Les paramètres sont transmis tels quels, sans que ce script ait à les connaître : une
+    condition d'expérience se déclare entièrement dans `config/historiques.yaml`.
 
     Args:
         moteur: clé de `MOTEURS`.
-        cote_max: grand côté à envoyer, 0 pour la résolution native.
-        image_path: chemin de l'image, pour les moteurs qui en dépendent.
+        cote_max: grand côté à envoyer, 0 pour la résolution native ; il l'emporte sur celui
+            du moteur, que la ligne de commande peut surcharger.
 
     Returns:
         Le dict à passer en `data` de la requête.
     """
-    cfg = MOTEURS[moteur]
-    champs = {"cote_max": cote_max}
-    champs.update(
-        {k: cfg[k] for k in ("max_tokens", "prompt", "prompt_type", "max_retries") if k in cfg}
-    )
-    return champs
+    return {**MOTEURS[moteur].parametres, "cote_max": cote_max}
 
 
 def extract_image(fs: s3fs.S3FileSystem, image_path: str, cote_max: int, moteur: str) -> str | None:
     """Soumet une image du corpus à `api_chandra`, telle qu'elle est stockée.
 
-    Le fichier part au champ `image` de l'API, sans conversion locale : c'est l'API qui
-    décode, réduit au besoin et encode pour le VLM. Le script n'a donc plus à ouvrir les
-    scans, dont certains dépassent les 800 mégapixels.
+    Le fichier part au champ `image` sans conversion locale : c'est l'API qui décode, réduit
+    et encode. Le script n'a donc pas à ouvrir des scans de plusieurs centaines de Mpx.
 
     Args:
         fs: système de fichiers S3.
@@ -146,6 +107,7 @@ def extract_image(fs: s3fs.S3FileSystem, image_path: str, cote_max: int, moteur:
     Returns:
         Le corps brut de la réponse (JSON sérialisé), ou None si l'appel a échoué.
     """
+    api_url = MOTEURS[moteur].api_url
     with fs.open(image_path, "rb") as f:
         image_bytes = f.read()
     suffixe = image_path.rsplit(".", 1)[-1].lower()
@@ -153,7 +115,7 @@ def extract_image(fs: s3fs.S3FileSystem, image_path: str, cote_max: int, moteur:
 
     try:
         response = requests.post(
-            f"{API_URL}/extract",
+            f"{api_url}/extract",
             files={
                 "image": (
                     image_path.rsplit("/", 1)[-1],
@@ -163,11 +125,11 @@ def extract_image(fs: s3fs.S3FileSystem, image_path: str, cote_max: int, moteur:
                     f"image/{'tiff' if suffixe in ('tif', 'tiff') else suffixe}",
                 )
             },
-            data=_champs(moteur, cote_max, image_path),
+            data=_champs(moteur, cote_max),
             timeout=None,  # l'appel au VLM distant peut être long, et il est déjà retenté côté API
         )
     except requests.exceptions.ConnectionError:
-        print(f"  [ERREUR] Impossible de joindre {API_URL}. L'API est-elle démarrée ?")
+        print(f"  [ERREUR] Impossible de joindre {api_url}. L'API est-elle démarrée ?")
         return None
 
     if response.status_code != 200:
@@ -176,8 +138,7 @@ def extract_image(fs: s3fs.S3FileSystem, image_path: str, cote_max: int, moteur:
 
     page = response.json()["pages"][0]
     source = page["pixels_source"]
-    # L'API rapporte la taille qu'elle a réellement envoyée au modèle : c'est elle qui décide
-    # de ce qu'il a vu, donc la seule grandeur qui rende deux extractions comparables.
+    # La taille réellement envoyée décide de ce que le modèle a vu : on la journalise.
     print(
         f"  {source[0]}×{source[1]} px, envoyés en {page['pixels'][0]}×{page['pixels'][1]} — "
         f"extraction réussie ({response.elapsed.total_seconds():.1f}s)"
@@ -195,7 +156,7 @@ def process_all(fs: s3fs.S3FileSystem, cote_max: int, overwrite: bool, moteur: s
         moteur: clé de `MOTEURS`.
     """
     images = list_images(fs)
-    sortie = MOTEURS[moteur]["json"]
+    sortie = MOTEURS[moteur].json
     print(f"{len(images)} image(s) dans s3://{S3_IMAGES} — moteur {moteur}\n")
 
     ok = skipped = errors = 0
@@ -252,7 +213,7 @@ def main() -> None:
         default=None,
         help=(
             "grand côté de l'image envoyée au modèle, en pixels ; 0 pour laisser le moteur "
-            "dimensionner. Par défaut, la valeur du moteur choisi (cf. MOTEURS)."
+            "dimensionner. Par défaut, la valeur du moteur choisi (config/historiques.yaml)."
         ),
     )
     parser.add_argument(
@@ -269,7 +230,9 @@ def main() -> None:
     args = parser.parse_args()
 
     fs = get_s3_fs()
-    cote_max = MOTEURS[args.moteur]["cote_max"] if args.cote_max is None else args.cote_max
+    cote_max = (
+        MOTEURS[args.moteur].parametres["cote_max"] if args.cote_max is None else args.cote_max
+    )
 
     if args.list:
         show_inventory(fs)
@@ -282,7 +245,7 @@ def main() -> None:
         content = extract_image(fs, image_path, cote_max, args.moteur)
         if content is None:
             raise SystemExit(1)
-        output_path = f"{MOTEURS[args.moteur]['json']}/{stem(image_path)}.json"
+        output_path = f"{MOTEURS[args.moteur].json}/{stem(image_path)}.json"
         fs.pipe(output_path, content.encode("utf-8"))
         print(f"  -> {output_path}")
         return

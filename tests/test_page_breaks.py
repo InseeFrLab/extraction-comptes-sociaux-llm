@@ -10,7 +10,7 @@ qui réimprime exactement le même en-tête.
 
 import pandas as pd
 import pytest
-from evaluation_extraction import (
+from evaluation import (
     METHODS_MERGING_PAGE_BREAKS,
     _has_column_header,
     _merge_page_breaks,

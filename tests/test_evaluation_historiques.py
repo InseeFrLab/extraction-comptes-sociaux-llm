@@ -1,4 +1,4 @@
-"""Tests du corpus « tableaux historiques » : lecture de la référence et appariement.
+"""Tests de la branche « tableaux historiques » d'`evaluation.py` : référence et appariement.
 
 Deux points de logique pure y décident du dénominateur des métriques :
 
@@ -11,7 +11,7 @@ Deux points de logique pure y décident du dénominateur des métriques :
 import pandas as pd
 import pytest
 from corpus_historiques import key_from_annotation, key_from_image, stem
-from evaluation_historiques import _split_rank, load_html
+from evaluation import _split_rank, load_html
 
 
 class FauxFS:

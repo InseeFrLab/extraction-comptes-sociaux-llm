@@ -9,24 +9,35 @@ Déployé sur GitHub Pages à chaque push sur `main`
 
 ## Structure
 
+Un dossier par nature de fichier ; seuls `_quarto.yml` et la page d'accueil restent à la
+racine.
+
+```
+website/
+├── _quarto.yml   configuration : navigation, thème, ressources
+├── index.qmd     page d'accueil
+├── pages/        les autres pages
+├── scripts/      Python : données du site, chiffres publiés, aperçus
+├── styles/       thème clair et thème sombre (SCSS)
+├── icons/        favicon et logo de la barre de navigation
+└── js/           le comparateur de grilles
+```
+
+### Pages
+
 | Fichier | Rôle |
 |---|---|
-| `_quarto.yml` | Configuration du site : navigation, thème, ressources. |
 | `index.qmd` | Introduction — objectif, chaîne de traitement, corpus, chiffres-clés, plan du site. |
-| `architecture.qmd` | Les deux moteurs (marker, chandra), les services qui les portent, et de vrais exemples de leur sortie sur le même PDF. |
-| `conversion.qmd` | L'étape `json_to_csv.py` en six étapes : de la sortie du moteur à la grille CSV. |
-| `evaluation.qmd` | La méthode d'`evaluation_extraction.py` : constitution des paires, délimitation des zones, normalisation, appariement, métriques. |
-| `resultats.qmd` | Toutes les mesures et les cas particuliers rencontrés, corpus des comptes sociaux. |
-| `resultats-historiques.qmd` | Les mesures du corpus des tableaux statistiques historiques, en version resserrée. |
-| `mise-en-forme.qmd` | Les écarts qui viennent d'une différence d'écriture entre annotation et moteur, pas d'une erreur d'extraction. |
-| `ameliorations.qmd` | Cinq leviers classés par impact mesuré, plus les corrections de mesure. |
-| `comparaison.qmd` | Visualiseur : grille annotée face à la grille extraite, cellule par cellule (comptes sociaux). |
-| `comparaison-historiques.qmd` | Le même visualiseur, sur le corpus des tableaux historiques. |
-| `_comparateur.qmd` | Contrôles, conteneur et légende du visualiseur, inclus par les deux pages. |
-| `comparateur.js` | Le visualiseur lui-même. La page hôte pose `window.DX_SOURCE` avant de le charger. |
-| `build_data.py` | Produit `data/comparaisons.json` depuis S3, et rapatrie les aperçus dans `data/apercus/`. |
-| `build_data_historiques.py` | Produit `data/comparaisons-historiques.json` depuis S3, aperçus compris. |
-| `styles.scss`, `styles-dark.scss` | Thème clair et thème sombre. |
+| `pages/architecture.qmd` | Les deux moteurs (marker, chandra), les services qui les portent, et de vrais exemples de leur sortie sur le même PDF. |
+| `pages/conversion.qmd` | L'étape `json_to_csv.py` en six étapes : de la sortie du moteur à la grille CSV. |
+| `pages/evaluation.qmd` | La méthode de `scripts/evaluation.py` : constitution des paires, délimitation des zones, normalisation, appariement, métriques. |
+| `pages/resultats.qmd` | Toutes les mesures et les cas particuliers rencontrés, corpus des comptes sociaux. |
+| `pages/resultats-historiques.qmd` | Les mesures du corpus des tableaux statistiques historiques, en version resserrée. |
+| `pages/mise-en-forme.qmd` | Les écarts qui viennent d'une différence d'écriture entre annotation et moteur, pas d'une erreur d'extraction. |
+| `pages/ameliorations.qmd` | Cinq leviers classés par impact mesuré, plus les corrections de mesure. |
+| `pages/comparaison.qmd` | Visualiseur : grille annotée face à la grille extraite, cellule par cellule (comptes sociaux). |
+| `pages/comparaison-historiques.qmd` | Le même visualiseur, sur le corpus des tableaux historiques. |
+| `pages/_comparateur.qmd` | Contrôles, conteneur et légende du visualiseur, inclus par les deux pages. |
 
 Les pages `architecture.qmd`, `conversion.qmd` et `evaluation.qmd` décrivent le pipeline ;
 `resultats.qmd`, `mise-en-forme.qmd` et `ameliorations.qmd` en donnent la mesure. Les liens
@@ -34,14 +45,39 @@ entre pages passent par des ancres explicites (`{#id}`), pour ne pas dépendre d
 translittération automatique des titres accentués par Pandoc.
 
 Les pages `.qmd` ne contiennent **aucun code exécuté** (`execute: enabled: false`) :
-Quarto ne fait que rendre du markdown. Python ne sert qu'à `build_data.py`.
+Quarto ne fait que rendre du markdown.
+
+### Scripts
+
+| Fichier | Rôle |
+|---|---|
+| `scripts/build_data.py` | Produit `data/comparaisons.json` depuis S3, et rapatrie les aperçus dans `data/apercus/`. |
+| `scripts/build_data_historiques.py` | Produit `data/comparaisons-historiques.json` depuis S3, aperçus compris. |
+| `scripts/chiffres_site.py` | Recalcule les chiffres en dur des pages « Résultats », `--corpus comptes-sociaux` ou `--corpus historiques`. |
+| `scripts/apercus.py` | Fabrique les vignettes des documents sources et les dépose sur S3 (une seule fois, cf. « Données »). |
+
+Les trois premiers réutilisent les fonctions de `scripts/evaluation.py`, à la racine du
+dépôt, plutôt que d'en réimplémenter une variante qui divergerait : le site doit décrire le
+pipeline en place. Ils l'ajoutent au `sys.path` par chemin relatif.
+
+### Front
+
+| Fichier | Rôle |
+|---|---|
+| `js/comparateur.js` | Le visualiseur lui-même. La page hôte pose `window.DX_SOURCE` et `window.DX_BASE` avant de le charger. |
+| `styles/styles.scss`, `styles/styles-dark.scss` | Thème clair et thème sombre. |
+| `icons/favicon.svg` | Favicon, et logo de la barre de navigation. |
+
+Les pages vivant dans `pages/`, elles atteignent ces fichiers et les données par `../` —
+d'où `window.DX_BASE = "../"`, que le comparateur applique aux chemins que porte le JSON
+(sa propre URL et celles des aperçus), écrits depuis la racine du site.
 
 ## Rendu local
 
 ```bash
 # 1. Récupérer les données depuis S3 (nécessite les identifiants S3)
-uv run --project website python website/build_data.py
-uv run --project website python website/build_data_historiques.py
+uv run --project website python website/scripts/build_data.py
+uv run --project website python website/scripts/build_data_historiques.py
 
 # 2. Rendre le site
 quarto render website

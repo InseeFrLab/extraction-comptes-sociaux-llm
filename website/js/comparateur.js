@@ -1,16 +1,28 @@
 // Comparateur de grilles, partagé par les pages « Comparaison » des deux corpus.
 //
 // La page hôte déclare ce qu'elle compare avant de charger ce fichier :
-//   window.DX_SOURCE   chemin du JSON de comparaison (défaut : data/comparaisons.json)
+//   window.DX_SOURCE   chemin du JSON de comparaison, depuis la racine du site
+//                      (défaut : data/comparaisons.json)
+//   window.DX_BASE     chemin de la racine du site depuis la page hôte (défaut : "").
+//                      Les pages vivent dans website/pages/, d'où « ../ » : les chemins du
+//                      JSON — sa propre URL et celles des aperçus — sont écrits depuis la
+//                      racine, et c'est ce préfixe qui les y ramène.
 //   window.DX_REBUILD  commande à afficher si le JSON est absent, puisqu'il n'est pas
 //                      versionné et se régénère depuis S3.
 // Tout le reste — statuts, appariement, survol lié — ne dépend que du contenu du JSON,
-// dont la structure est la même pour les deux corpus (cf. website/build_data.py).
+// dont la structure est la même pour les deux corpus (cf. website/scripts/build_data.py).
 (function () {
   "use strict";
 
-  var SOURCE = window.DX_SOURCE || "data/comparaisons.json";
-  var REBUILD = window.DX_REBUILD || "uv run --project website python website/build_data.py";
+  var BASE = window.DX_BASE || "";
+  var SOURCE = BASE + (window.DX_SOURCE || "data/comparaisons.json");
+  var REBUILD = window.DX_REBUILD ||
+    "uv run --project website python website/scripts/build_data.py";
+
+  // Un chemin du JSON, ramené à la page courante.
+  function chemin(relatif) {
+    return BASE + relatif;
+  }
 
   var STATUS_LABEL = {
     "ok": "valeur correcte",
@@ -369,7 +381,7 @@
     images.forEach(function (src, i) {
       var figure = el("figure", "dx-apercu-fig");
       var img = el("img", "dx-apercu-img");
-      img.src = src;
+      img.src = chemin(src);
       img.loading = "lazy";
       img.decoding = "async";
       img.alt = images.length > 1
@@ -380,7 +392,7 @@
       var caption = el("figcaption", "dx-apercu-cap");
       var lien = el("a", null,
         (images.length > 1 ? "Page " + (i + 1) + " — " : "") + "ouvrir en pleine taille");
-      lien.href = src;
+      lien.href = chemin(src);
       lien.target = "_blank";
       lien.rel = "noopener";
       caption.appendChild(lien);

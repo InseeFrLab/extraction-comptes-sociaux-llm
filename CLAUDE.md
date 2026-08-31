@@ -13,10 +13,10 @@ Le repo est donc un pipeline en trois temps : `PDF → JSON → CSV → métriqu
 
 Deux corpus le traversent, mêmes étapes et mêmes métriques :
 
-| Corpus | Entrée | Référence | Moteurs | Préfixe S3 |
-|---|---|---|---|---|
-| **Comptes sociaux** | PDF scannés | XLSX (`annotations/clean/`) | marker, chandra | `reprise/` |
-| **Tableaux historiques** | images TIFF/PNG, un tableau par fichier | HTML (`annotations/tableaux historiques/`) | chandra | `tableaux_historiques/` |
+| Corpus | Entrée | Référence | Moteurs | Préfixe S3 | Config |
+|---|---|---|---|---|---|
+| **Comptes sociaux** | PDF scannés | XLSX (`annotations/clean/`) | marker, chandra | `reprise/` | `config/comptes-sociaux.yaml` |
+| **Tableaux historiques** | images TIFF/PNG, un tableau par fichier | HTML (`annotations/tableaux historiques/`) | chandra | `tableaux_historiques/` | `config/historiques.yaml` |
 
 ## Architecture
 
@@ -24,27 +24,30 @@ Deux corpus le traversent, mêmes étapes et mêmes métriques :
 PDF (S3) ──> api_marker (OCR GPU) ──> marker_proxy ──> LLM distant
                     │ JSON (S3)
                     ▼
-             json_to_csv.py ──> CSV (S3) ──> evaluation_extraction.py ──> métriques (parquet)
-                                                        ▲
-                                              annotations XLSX (S3)
+             json_to_csv.py ──> CSV (S3) ──> evaluation.py ──> métriques (parquet)
+                                                  ▲
+                                        annotations XLSX (S3)
 ```
 
 | Dossier | Rôle |
 |---|---|
+| `config/` | **Un fichier YAML par corpus d'origine** (`comptes-sociaux`, `historiques`) : chemins S3, moteurs comparés, paramètres transmis aux APIs, seuils de la mesure, réglages du site. Lu par `scripts/config.py`. Aucune variable de traitement ne doit être écrite en dur dans un script. |
 | `api/` | Services FastAPI, un sous-dossier = une image Docker. `api_marker` (OCR + structuration, **GPU**), `marker_proxy` (relais LLM + tracing Langfuse), `api_opendataloader` et `api_chandra` (moteurs alternatifs, pour comparaison). |
 | `libs/` | Package partagé `extraction-common`, installé **en éditable** partout. `extraction_common/s3.py` (client S3), `data_management/` (config marker, batch sizes, PDF → image). |
-| `scripts/` | Orchestration et évaluation, lancés en local via `uv`. `extraction_pdf_via_api.py` (étape 1), `json_to_csv.py` (étape 2), `comparaison_pdf_csv.py` + `evaluation_extraction.py` (étape 3). Le corpus historique a ses variantes d'étape 1 et 3 — `extraction_historiques.py`, `evaluation_historiques.py`, `chiffres_site_historiques.py` — et ses conventions dans `corpus_historiques.py` ; l'étape 2 est commune. `apercus.py` fabrique les vignettes des documents sources publiées par le site, pour les deux corpus. |
+| `scripts/` | Orchestration et évaluation du pipeline, lancés en local via `uv`. `config.py` (lecture de `config/*.yaml`), `extraction_pdf_via_api.py` (étape 1), `json_to_csv.py` (étape 2), `comparaison_pdf_csv.py` + `evaluation.py` (étape 3). Le corpus historique n'a sa variante que de l'étape 1 — `extraction_historiques.py` — et ses conventions de nommage dans `corpus_historiques.py` ; les étapes 2 et 3 sont communes. **Les choix de conversion et de mesure, avec les mesures qui les fondent, sont dans [`scripts/README.md`](scripts/README.md) : le lire avant de toucher au parsing ou aux métriques.** |
+| `website/` | Le site Quarto et **tout ce qui ne sert qu'à lui** : `pages/`, `styles/`, `icons/`, `js/`, et `scripts/` (`build_data*.py`, `chiffres_site.py`, `apercus.py`). Voir [website/README.md](website/README.md). |
 | `tests/` | Tests unitaires (voir plus bas). |
-| `legacy/`, `api/api_centrale/`, `kubernetes/` | **Legacy — ne pas modifier.** Anciens PoC, ancien service de récupération INPI (pip/`requirements.txt`, Python 3.11) et ancien déploiement SSP Cloud. Conservés pour référence, hors périmètre de travail. `legacy/` est exclu du lint. |
+| `legacy/`, `api/api_centrale/`, `kubernetes/` | **Legacy — ne pas modifier.** Anciens PoC, analyses closes (`geometrie_marker.py`), ancien service de récupération INPI (pip/`requirements.txt`, Python 3.11) et ancien déploiement SSP Cloud. Conservés pour référence, hors périmètre de travail. `legacy/` est exclu du lint. |
 
 Points structurants à connaître avant de modifier du code :
 
-- **Chaque sous-projet a son propre `pyproject.toml` + `uv.lock` et son propre venv.** Toujours lancer les commandes depuis le bon dossier (`cd scripts`, `cd api/api_marker`…).
+- **Chaque sous-projet a son propre `pyproject.toml` + `uv.lock` et son propre venv.** Toujours lancer les commandes depuis le bon dossier (`cd scripts`, `cd api/api_marker`…). Les scripts de `website/scripts/` tournent dans le venv `website` (`uv run --project website python website/scripts/…`), et non dans celui de `scripts/`.
 - **`extraction-common` doit rester en `editable = true`** dans `[tool.uv.sources]` : sinon les modifs de `libs/src/**` ne sont pas prises en compte.
-- **La config OCR est centralisée** dans `libs/src/data_management/extract_image_to_json.py` (`use_llm`, `openai_model`, `recognition_batch_size`). Sur GPU 16 Go, garder `recognition_batch_size` ≤ 32 sous peine d'OOM.
-- Les chemins S3 sont des constantes en tête de chaque script (`BUCKET`, `METHODS`, `SOURCES`) — ajouter une méthode d'extraction = ajouter une entrée dans ces dicts.
-- **`corpus_historiques.py` ne doit dépendre de rien.** Il est importé en cascade par `website/build_data_historiques.py`, dont le venv n'a ni `requests` ni `Pillow` : y ajouter un import tiers casserait le rendu du site.
-- **`api_chandra` accepte soit un `pdf`, soit une `image`.** Le dpi (`CHANDRA_DPI`) ne concerne que les PDF, où il est **fixe à 200** — le mode adaptatif page par page qui a existé était mesuré perdant (−149 cellules sur 31 paires) et a été retiré. Une image n'a pas de taille physique, donc pas de dpi : c'est le nombre de pixels envoyés qui décide de ce que le modèle voit, via `cote_max` (2 200 px de grand côté, soit à peu près une A4 lue à 200 dpi).
+- **Rien de configurable n'est écrit en dur.** Chemins S3, moteurs, paramètres d'API, seuils : tout est déclaré dans `config/{corpus}.yaml` et lu via `scripts/config.py`. Ajouter un moteur ou une condition d'expérience = **ajouter un bloc dans `moteurs`**, et rien d'autre : `json_to_csv.py` et `evaluation.py` en dérivent leurs méthodes. Ce qui reste dans le code, c'est ce qui *est* du code : extracteurs, appariements, métriques.
+- **Une mesure, plusieurs corpus.** `evaluation.py` porte le calcul des métriques ; ce qui diffère d'un corpus à l'autre est la référence (XLSX ou HTML) et l'appariement (par SIREN ou par nom de fichier), rien d'autre. La configuration désigne le sien par `evaluation.appariement`, et `TRAITEMENTS` en porte le code. Ajouter un corpus = ajouter un fichier de config ; s'il s'apparie autrement, une entrée de plus dans `TRAITEMENTS`. Même logique pour `website/scripts/chiffres_site.py`, dont seules les sections publiées dépendent du corpus.
+- **La config OCR est centralisée** dans `libs/src/data_management/extract_image_to_json.py` (`use_llm`, `openai_model`, `recognition_batch_size`). Elle est propre au service `api_marker`, pas à un corpus : elle ne passe donc pas par `config/`. Sur GPU 16 Go, garder `recognition_batch_size` ≤ 32 sous peine d'OOM.
+- **`corpus_historiques.py` ne dépend que de `config`.** Il est importé en cascade par `website/scripts/build_data_historiques.py`, dont le venv n'a ni `requests` ni `pandas` : y ajouter un autre import tiers casserait le rendu du site. PyYAML est déclaré dans les deux venvs (`scripts` et `website`) pour cette raison.
+- **`api_chandra` accepte soit un `pdf`, soit une `image`.** Le dpi (`CHANDRA_DPI`) ne concerne que les PDF, où il est **fixe à 200** ; une image n'a pas de taille physique donc pas de dpi, et c'est le nombre de pixels envoyés qui décide de ce que le modèle voit, via `cote_max` (2 200 px, déclaré dans `config/historiques.yaml`). Tous les choix de ce service — résolution fixe, HTML rendu brut, plafond de jetons, politique de relance — sont documentés avec leurs mesures dans [`api/api_chandra/README.md`](api/api_chandra/README.md) : **le lire avant d'y toucher**, plusieurs de ces réglages ont déjà été essayés autrement et mesurés perdants.
 
 ## Consignes de dev
 

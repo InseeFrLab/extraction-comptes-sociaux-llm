@@ -1,5 +1,5 @@
 <!-- Contrôles, conteneur et légende du comparateur de grilles, communs aux deux corpus.
-Chaque page hôte pose window.DX_SOURCE puis charge comparateur.js. -->
+Chaque page hôte pose window.DX_SOURCE et window.DX_BASE puis charge js/comparateur.js. -->
 
 ::: {.dx-controls .column-screen-inset}
 ::: {.dx-control}

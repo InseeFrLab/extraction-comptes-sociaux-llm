@@ -3,7 +3,7 @@ title: "Évaluation"
 subtitle: "Comment une prédiction est normalisée, puis comparée à son annotation"
 ---
 
-`scripts/evaluation_extraction.py` confronte chaque CSV prédit au tableau annoté à la main
+`scripts/evaluation.py` confronte chaque CSV prédit au tableau annoté à la main
 et écrit quatre métriques par paire dans
 `s3://projet-extraction-tableaux/reprise/eval/evaluation.parquet`.
 
@@ -428,7 +428,7 @@ Soit l'aide est fausse, soit l'implémentation l'est.
 
 Les quatre métriques disent *combien* de cellules sont perdues, pas *pourquoi*. Le
 diagnostic publié sur ce site ajoute donc une classification par cellule
-(`cell_status`, [`website/build_data.py`](https://github.com/InseeFrLab/extraction-comptes-sociaux-llm/blob/main/website/build_data.py)),
+(`cell_status`, [`website/scripts/build_data.py`](https://github.com/InseeFrLab/extraction-comptes-sociaux-llm/blob/main/website/scripts/build_data.py)),
 qui **réutilise les fonctions d'évaluation telles quelles** — le site décrit le pipeline en
 place, pas une réimplémentation qui divergerait.
 

@@ -2,17 +2,17 @@
 """Construit le jeu de données du corpus « tableaux historiques » pour le site.
 
 Même sortie que `build_data.py`, même structure de JSON, donc même comparateur côté
-navigateur (`comparateur.js`). Ne changent que la référence et l'appariement, tous deux
-importés de `scripts/evaluation_historiques.py` pour que le site et la mesure ne puissent
-pas diverger :
+navigateur (`js/comparateur.js`). Ne changent que la référence et l'appariement, tous deux
+importés de la branche « historiques » de `scripts/evaluation.py` pour que le site et la
+mesure ne puissent pas diverger :
 
 - l'annotation est un fichier HTML, `annotations/tableaux historiques/ground_truth_*.html` ;
 - elle est appariée à `tableaux_historiques/output_csv/chandra/{crop}_1.csv` par le nom de
   fichier, chaque image portant un tableau entier.
 
 Usage :
-    uv run --project website python website/build_data_historiques.py
-    uv run --project website python website/build_data_historiques.py --limit 5
+    uv run --project website python website/scripts/build_data_historiques.py
+    uv run --project website python website/scripts/build_data_historiques.py --limit 5
 """
 
 from __future__ import annotations
@@ -22,20 +22,28 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+RACINE_SITE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RACINE_SITE.parent / "scripts"))
 
-import evaluation_historiques as EH  # noqa: E402
-from build_data import (  # noqa: E402
-    MATCH_THRESHOLD,
-    compare_pair,
-    load_csv,
-    telecharger_apercus,
-)
-from corpus_historiques import BUCKET  # noqa: E402
+import evaluation as E  # noqa: E402
+from build_data import compare_pair, load_csv, telecharger_apercus  # noqa: E402
 from extraction_common.s3 import get_s3_fs  # noqa: E402
 
-S3_APERCUS = f"{BUCKET}/tableaux_historiques/apercus"
-OUT_PATH = Path(__file__).parent / "data" / "comparaisons-historiques.json"
+import config  # noqa: E402
+
+CONFIG = config.charger("historiques")
+
+S3_APERCUS = CONFIG.site["apercus"]["prefixe"]
+OUT_PATH = RACINE_SITE / CONFIG.site["donnees"]
+MATCH_THRESHOLD = CONFIG.evaluation["seuil_similarite"]
+
+# Le site ne publie que des **moteurs**, pas les conditions d'expérience — d'où le drapeau
+# `publie` de la config. `evaluation.py` en mesure quatre sur ce corpus : trois variantes de
+# chandra qui ne changent qu'un réglage (prompt, plafond de sortie) et sont là pour être
+# comparées entre elles, pas pour être montrées comme d'autres modèles. Le site s'en tient
+# donc à `chandra`, notre appel direct, le seul moteur joué sur ce corpus : deux modèles au
+# total sur le site, marker et chandra, marker n'ayant jamais tourné sur les historiques.
+METHODS: dict[str, str] = CONFIG.publies()
 
 
 def _pct(taux: float | None) -> str:
@@ -55,8 +63,8 @@ def build(limit: int | None = None) -> dict:
     fs = get_s3_fs()
     print("Lecture des annotations et des prédictions…", flush=True)
     par_moteur: dict[str, dict] = {}
-    for methode, prefixe in EH.METHODS.items():
-        pairs, counts = EH.list_pairs(fs, prefixe)
+    for methode, prefixe in METHODS.items():
+        pairs, counts = E.list_pairs_historiques(fs, CONFIG.annotations, prefixe)
         par_moteur[methode] = {
             "pairs": {cle: (ann, chemin) for cle, ann, chemin in pairs},
             "counts": counts,
@@ -76,7 +84,7 @@ def build(limit: int | None = None) -> dict:
             if cle not in donnees["pairs"]:
                 continue
             ann, chemin = donnees["pairs"][cle]
-            result = compare_pair(ann, load_csv(fs, chemin))
+            result = compare_pair(ann, load_csv(fs, chemin), MATCH_THRESHOLD)
             if result is None:
                 continue
             # Le découpage est propre au moteur : deux moteurs ne segmentent pas pareil.
@@ -110,15 +118,16 @@ def build(limit: int | None = None) -> dict:
 
     return {
         "meta": {
-            "source": f"s3://{BUCKET}/tableaux_historiques/",
-            "methods": list(EH.METHODS),
+            "source": f"s3://{CONFIG.site['racine']}",
+            "methods": list(METHODS),
             "nTables": len(tables),
             "matchThreshold": MATCH_THRESHOLD,
             "note": (
                 "Grilles publiées telles quelles. Source : tableaux statistiques "
                 "historiques scannés, annotés à la main en HTML. `chandra` est notre "
-                "appel direct à l'API ; les autres colonnes en dérivent, chacune ne "
-                "changeant qu'un réglage (prompt, plafond de sortie, relances)."
+                "appel direct à l'API, le seul moteur joué sur ce corpus. Les conditions "
+                "d'expérience qui n'en changent qu'un réglage sont mesurées par "
+                "`scripts/evaluation.py` et ne sont pas publiées ici."
             ),
         },
         "tables": tables,

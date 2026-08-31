@@ -1,58 +1,11 @@
 #!/usr/bin/env python3
 """
-Extraction des PDFs depuis S3 via les APIs d'extraction (api_marker ou api_opendataloader).
+Extraction des PDFs depuis S3 via les APIs d'extraction (marker, opendataloader, chandra).
 
-═══════════════════════════════════════════════════════════════
- DÉMARRAGE LOCAL DES APIs
-═══════════════════════════════════════════════════════════════
+L'API du moteur doit tourner : les commandes de démarrage, les variables d'environnement de
+chaque service et les choix du pipeline sont dans [README.md](README.md).
 
-  --- api_marker (LLM, port 8001) ---
-
-  Terminal 1 — marker_proxy (port 1324, LLM proxy + Langfuse)
-  ────────────────────────────────────────────────────────────
-    cd api/marker_proxy
-    uv run python -m uvicorn proxy:app --host 0.0.0.0 --port 1324 --app-dir src
-
-  Terminal 2 — api_marker (port 8001)
-  ────────────────────────────────────────────────────────────
-    cd api/api_marker
-    uv run python -m uvicorn main_marker:app --host 0.0.0.0 --port 8001 --app-dir src
-
-  Variables d'environnement pour api_marker / marker_proxy :
-    REAL_LLM_BASE_URL       URL du LLM (défaut: https://llm.lab.sspcloud.fr/v1)
-    REAL_LLM_API_KEY        Clé API du LLM
-    PROXY_URL               URL de marker_proxy (défaut: http://localhost:1324/v1)
-    LANGFUSE_PUBLIC_KEY     (optionnel)
-    LANGFUSE_SECRET_KEY     (optionnel)
-    LANGFUSE_HOST           (optionnel)
-
-  --- api_opendataloader (Java, port 8002) ---
-
-  Terminal 1 — api_opendataloader (port 8002, nécessite Java 11+)
-  ────────────────────────────────────────────────────────────
-    cd api/api_opendataloader
-    uvicorn main_opendataloader:app --host 0.0.0.0 --port 8002 --app-dir src
-
-  --- api_chandra (VLM vllm, port 8003) ---
-
-  Terminal 1 — api_chandra (port 8003)
-  ────────────────────────────────────────────────────────────
-    cd api/api_chandra
-    uv run uvicorn main_chandra:app --host 0.0.0.0 --port 8003 --app-dir src
-
-  Variables d'environnement pour api_chandra :
-    CHANDRA_BASE_URL   URL vllm  (défaut: https://llm.lab.sspcloud.fr/api, sans /v1)
-    CHANDRA_MODEL      Nom du modèle (défaut: chandra-ocr-2)
-    CHANDRA_API_KEY    Clé API (défaut: EMPTY ; sur llm.lab, passer REAL_LLM_API_KEY)
-    CHANDRA_DPI        Résolution PDF→image, en dpi (défaut: 200, fixe)
-
-  Voir le docstring de api/api_chandra/src/main_chandra.py pour ce que le déploiement du
-  modèle doit fournir de son côté (chat_template.jinja, défauts d'échantillonnage).
-
-═══════════════════════════════════════════════════════════════
- USAGE DU SCRIPT
-═══════════════════════════════════════════════════════════════
-
+Usage :
     # Avec api_marker (défaut)
     uv run extraction_pdf_via_api.py --from-parquet
     uv run extraction_pdf_via_api.py --pdf-key dossier/fichier.pdf
@@ -64,60 +17,35 @@ Extraction des PDFs depuis S3 via les APIs d'extraction (api_marker ou api_opend
     uv run extraction_pdf_via_api.py --api opendataloader --from-parquet
     uv run extraction_pdf_via_api.py --api opendataloader --pdf-key dossier/fichier.pdf
 
-    # Lister les PDFs S3
+    # Lister les PDFs du corpus
     uv run extraction_pdf_via_api.py --list
 
-  Variables d'environnement du script :
-    API_MARKER_URL              URL de api_marker       (défaut: http://localhost:8001)
-    API_OPENDATALOADER_URL      URL de api_opendataloader (défaut: http://localhost:8002)
-    AWS_S3_BUCKET
-    AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY
-    AWS_SESSION_TOKEN           (optionnel)
-    AWS_S3_ENDPOINT             (optionnel, ex: minio.lab.sspcloud.fr)
-    AWS_REGION                  (défaut: us-east-1)
+Les chemins S3, les moteurs et leurs URLs d'API sont déclarés dans
+`config/comptes-sociaux.yaml` : rien de tout cela n'est en dur ici.
 """
 
 import argparse
 import json
-import os
 
 import pandas as pd
 import requests
 import s3fs
-from dotenv import load_dotenv
 from extraction_common.s3 import get_s3_fs
 
-load_dotenv()
+import config
 
-AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
-
-API_URLS = {
-    "marker": os.getenv("API_MARKER_URL", "http://localhost:8001"),
-    "opendataloader": os.getenv("API_OPENDATALOADER_URL", "http://localhost:8002"),
-    "chandra": os.getenv("API_CHANDRA_URL", "http://localhost:8003"),
-}
-
-S3_BASE = "s3://projet-extraction-tableaux"
-PARQUET_PATH = f"{S3_BASE}/reprise/correspondances.parquet"
-OUTPUT_PREFIXES = {
-    "marker": "reprise/output_marker",
-    "opendataloader": "reprise/output_opendataloader",
-    "chandra": "reprise/output_chandra",
-}
-OUTPUT_EXTENSIONS = {
-    "marker": ".json",
-    "opendataloader": ".html",
-    "chandra": ".json",
-}
-
-
-S3_BUCKET = S3_BASE.removeprefix("s3://")
+# Chemins S3, moteurs et URLs d'API : tout vient de `config/comptes-sociaux.yaml`.
+CONFIG = config.charger("comptes-sociaux")
+# Seuls les moteurs dotés d'une API sont pilotables ici ; les autres ne sont plus produits.
+MOTEURS = CONFIG.pilotes()
+PARQUET_PATH = CONFIG.sources["correspondances"]
+S3_PDF = CONFIG.sources["pdf"]
 
 
 def list_pdfs(fs: s3fs.S3FileSystem) -> list[str]:
-    all_keys = fs.ls(S3_BUCKET, detail=False)
-    return [k.removeprefix(f"{S3_BUCKET}/") for k in all_keys if k.lower().endswith(".pdf")]
+    """Clés des PDFs du corpus, relatives au bucket."""
+    all_keys = fs.ls(S3_PDF, detail=False)
+    return [k.removeprefix(f"{CONFIG.bucket}/") for k in all_keys if k.lower().endswith(".pdf")]
 
 
 def extract_pdf_via_api(fs: s3fs.S3FileSystem, pdf_s3_path: str, api: str) -> str | None:
@@ -131,7 +59,7 @@ def extract_pdf_via_api(fs: s3fs.S3FileSystem, pdf_s3_path: str, api: str) -> st
     print(f"  PDF lu ({len(pdf_bytes):,} octets)")
 
     filename = pdf_s3_path.split("/")[-1]
-    base_url = API_URLS[api]
+    base_url = MOTEURS[api].api_url
     endpoint = f"{base_url}/extract"
     print(f"  Envoi à {endpoint} ...")
 
@@ -155,8 +83,8 @@ def extract_pdf_via_api(fs: s3fs.S3FileSystem, pdf_s3_path: str, api: str) -> st
 
 def save_output(fs: s3fs.S3FileSystem, siren: str, content: str, api: str):
     """Sauvegarde le résultat brut dans le préfixe S3 correspondant à l'API."""
-    ext = OUTPUT_EXTENSIONS[api]
-    path = f"{S3_BASE}/{OUTPUT_PREFIXES[api]}/{siren}{ext}"
+    moteur = MOTEURS[api]
+    path = f"{moteur.json}/{siren}{moteur.extension}"
     fs.pipe(path, content.encode("utf-8"))
     print(f"  -> Sauvegardé : {path}")
 
@@ -171,12 +99,11 @@ def process_from_parquet(fs: s3fs.S3FileSystem, api: str):
     print(f"{len(df_to_process)} PDF(s) à traiter (avec xlsx associé)\n")
 
     ok, skipped, errors = 0, 0, 0
-    prefix = OUTPUT_PREFIXES[api]
-    ext = OUTPUT_EXTENSIONS[api]
+    moteur = MOTEURS[api]
     for _, row in df_to_process.iterrows():
         siren = row["siren"]
         pdf_path = row["pdf"]
-        output_path = f"{S3_BASE}/{prefix}/{siren}{ext}"
+        output_path = f"{moteur.json}/{siren}{moteur.extension}"
 
         if fs.exists(output_path):
             print(f"[SKIP]    {siren} — déjà traité")
@@ -204,7 +131,7 @@ def main():
     )
     parser.add_argument(
         "--api",
-        choices=list(API_URLS),
+        choices=list(MOTEURS),
         default="marker",
         help="API à utiliser pour l'extraction (défaut: marker)",
     )
@@ -227,17 +154,17 @@ def main():
     if args.list:
         pdfs = list_pdfs(fs)
         if not pdfs:
-            print(f"Aucun PDF trouvé dans {S3_BASE}")
+            print(f"Aucun PDF trouvé dans s3://{S3_PDF}")
             return
-        print(f"\n{len(pdfs)} PDF(s) dans {S3_BASE} :\n")
+        print(f"\n{len(pdfs)} PDF(s) dans s3://{S3_PDF} :\n")
         for k in pdfs:
             print(f"  {k}")
         return
 
-    print(f"API sélectionnée : {args.api} ({API_URLS[args.api]})\n")
+    print(f"API sélectionnée : {args.api} ({MOTEURS[args.api].api_url})\n")
 
     if args.pdf_key:
-        result = extract_pdf_via_api(fs, f"{S3_BASE}/{args.pdf_key}", args.api)
+        result = extract_pdf_via_api(fs, f"{CONFIG.bucket}/{args.pdf_key}", args.api)
         if result:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         return

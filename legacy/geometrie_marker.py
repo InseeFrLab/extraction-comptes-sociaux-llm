@@ -20,10 +20,14 @@ Deux questions, celles du diagnostic publié :
 
 Aucun appel au GPU ni au LLM : les coordonnées sont déjà dans les fichiers.
 
-Usage :
-    uv run geometrie_marker.py
-    uv run geometrie_marker.py --recouvrement 0.3
-    uv run geometrie_marker.py --save        (dépose aussi le détail en parquet sur S3)
+**Archivé.** Cette analyse a été menée à son terme — son résultat est publié par la page
+« Améliorations » du site — et ne fait plus partie de la chaîne. Elle importe `evaluation`
+et `json_to_csv` de `scripts/`, d'où le `PYTHONPATH` ci-dessous.
+
+Usage (depuis la racine du dépôt) :
+    PYTHONPATH=scripts uv run --project scripts python legacy/geometrie_marker.py
+    ... legacy/geometrie_marker.py --recouvrement 0.3
+    ... legacy/geometrie_marker.py --save    (dépose aussi le détail en parquet sur S3)
 """
 
 import argparse
@@ -33,7 +37,7 @@ from collections import Counter
 
 import pandas as pd
 import s3fs
-from evaluation_extraction import S3_ANNOTATIONS, _load_xlsx, detect_column_header_height
+from evaluation import S3_ANNOTATIONS, _load_xlsx, detect_column_header_height
 from extraction_common.s3 import get_s3_fs
 
 # Fonctions de la conversion, réutilisées telles quelles : le diagnostic doit décrire la

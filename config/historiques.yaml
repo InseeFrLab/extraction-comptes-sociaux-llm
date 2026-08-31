@@ -1,0 +1,119 @@
+# Corpus « tableaux historiques » — images TIFF/PNG, un tableau par fichier, référence HTML.
+#
+# Mêmes étapes et mêmes métriques que le corpus des comptes sociaux : ne changent que la
+# référence, l'appariement, et le fait que plusieurs **conditions d'expérience** y sont
+# comparées — le même appel au VLM à un réglage près.
+#
+# Les chemins sont **relatifs au bucket** ; le chargeur les préfixe.
+
+nom: historiques
+bucket: projet-extraction-tableaux
+
+# Suffixe des clés de `json_to_csv.py --method`, qui numérote les moteurs de tous les
+# corpus dans un même espace de noms : `chandra` (comptes sociaux) et `chandra_historiques`
+# désignent deux jeux de fichiers différents.
+suffixe_methode: _historiques
+
+# Réglages partagés par toutes les conditions, déclarés une fois et repris par ancre YAML.
+reglages:
+  # Grand côté, en pixels, de notre dimensionnement. Une image n'a pas de taille physique,
+  # donc pas de dpi : c'est le nombre de pixels envoyés qui décide de ce que le modèle voit.
+  # Valeur mesurée : voir « Effet de la résolution » sur la page Résultats du site.
+  cote_max: &cote_max 2200
+
+sources:
+  images: pdf/tableaux historiques
+  annotations: annotations/tableaux historiques
+
+# Une image et son annotation portent la même clé, préfixée différemment :
+#   crop_1970_bis.tiff ↔ ground_truth_1970_bis.html → clé « 1970_bis »
+nommage:
+  prefixe_image: crop_
+  prefixe_annotation: ground_truth_
+  extensions_image: [.tif, .tiff, .png, .jpg, .jpeg]
+
+# Étape 3 — mesure (`scripts/evaluation.py`), rigoureusement la même que l'autre corpus.
+evaluation:
+  sortie: tableaux_historiques/eval/evaluation.parquet
+  seuil_similarite: 0.5
+  tolerance_colonnes: 0
+  # Pas de SIREN ni de parquet ici : l'annotation est appariée par le nom de fichier.
+  appariement: cle_fichier
+  largeur_nom: 16
+
+site:
+  racine: tableaux_historiques/
+  donnees: data/comparaisons-historiques.json
+  build: website/scripts/build_data_historiques.py
+  apercus:
+    prefixe: tableaux_historiques/apercus
+    # L'aperçu est rendu au grand côté que le modèle a réellement vu : il montre donc ce
+    # que le moteur a lu, ce qui est exactement ce qu'on attend d'un diagnostic.
+    cote_max: *cote_max
+    qualite_jpeg: 78
+
+# Les conditions d'extraction comparées. Toutes passent par `api_chandra`, notre appel
+# direct au VLM ; `parametres` porte les champs transmis à l'API, et une clé absente laisse
+# l'API décider. Une nouvelle condition s'ajoute donc ici, et nulle part ailleurs.
+#
+# Un prompt se désigne par son nom (`prompt_type`), jamais par son texte : c'est l'API qui
+# le résout dans `chandra.prompts`, seule source de vérité. `prompt` accepte un texte libre,
+# pour explorer hors de ces deux-là.
+moteurs:
+  # La référence, celle dont le site publie les chiffres : image seule, sans prompt, réduite
+  # au grand côté demandé. `max_tokens` et `max_retries` à 0 figent le comportement qui a
+  # produit ces chiffres — ni plafond de sortie, ni relance sur répétition — là où l'API pose
+  # désormais les deux par défaut.
+  chandra:
+    api: &api_chandra
+      url: http://localhost:8003
+      variable_url: API_CHANDRA_URL
+    parametres:
+      cote_max: *cote_max
+      max_tokens: 0
+      max_retries: 0
+    json: tableaux_historiques/output_chandra
+    csv: tableaux_historiques/output_csv/chandra
+    extension: .json
+    extracteur: chandra
+    publie: true
+
+  # `chandra_prompt_ocr` et `chandra_prompt_layout` mesurent le prompt seul : même client,
+  # même échantillonnage, même image, seule la présence du bloc texte change. `ocr` étant
+  # `ocr_layout` privé des bbox et des étiquettes de bloc, leur écart chiffre le coût de la
+  # tâche de mise en page, séparément des consignes de formatage que les deux partagent.
+  chandra_prompt_ocr:
+    api: *api_chandra
+    parametres:
+      cote_max: *cote_max
+      prompt_type: ocr
+    json: tableaux_historiques/output_chandra_prompt_ocr
+    csv: tableaux_historiques/output_csv/chandra_prompt_ocr
+    extension: .json
+    extracteur: chandra
+
+  chandra_prompt_layout:
+    api: *api_chandra
+    parametres:
+      cote_max: *cote_max
+      prompt_type: ocr_layout
+    json: tableaux_historiques/output_chandra_prompt_layout
+    csv: tableaux_historiques/output_csv/chandra_prompt_layout
+    extension: .json
+    extracteur: chandra
+
+  # `chandra` borné : le plafond de sortie que l'appel direct n'avait pas. Mesuré sur les
+  # 40 images, le plus gros tableau légitime demande 13 644 jetons et une génération
+  # dégénérée en consomme 62 000 ; 16 384 laisse 20 % de marge et coupe les boucles au
+  # quart. `max_retries` reste à 0 : la répétition est détectée et marquée dans la sortie,
+  # pas combattue. À comparer à `chandra`, dont il ne diffère que par le plafond.
+  chandra_borne:
+    api: *api_chandra
+    parametres:
+      cote_max: *cote_max
+      max_tokens: 16384
+      max_retries: 0
+    json: tableaux_historiques/output_chandra_borne
+    csv: tableaux_historiques/output_csv/chandra_borne
+    extension: .json
+    extracteur: chandra
