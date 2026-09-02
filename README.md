@@ -69,6 +69,8 @@ extraction-comptes-sociaux-llm/
 │   ├── extraction_historiques.py         ← le même pilote, sur le corpus des tableaux historiques
 │   ├── corpus_historiques.py             ← conventions de nommage de ce corpus
 │   ├── json_to_csv.py                    ← convertit les JSON de sortie (marker/ODL) en CSV sur S3
+│   ├── conversion/                       ← le code de cette conversion : grid, html_tables, chandra,
+│   │                                       extractors, pipeline, cli
 │   ├── comparaison_pdf_csv.py            ← apparie PDFs et annotations XLSX de référence
 │   ├── evaluation.py                     ← compare CSV prédits et annotations (métriques), les deux
 │   │                                       corpus : `--corpus comptes-sociaux|historiques|all`

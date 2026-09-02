@@ -15,7 +15,8 @@ réfère plutôt que de les répéter.
 | `extraction_pdf_via_api.py` | 1 | PDF S3 → API du moteur → JSON/HTML brut sur S3. |
 | `extraction_historiques.py` | 1 | Le même pilote, sur les images du corpus historique. |
 | `corpus_historiques.py` | — | Conventions de nommage de ce corpus (image ↔ annotation). |
-| `json_to_csv.py` | 2 | Sorties brutes des moteurs → un CSV par tableau, sur S3. |
+| `json_to_csv.py` | 2 | Sorties brutes des moteurs → un CSV par tableau, sur S3. CLI et point d'import ; le code est dans `conversion/`. |
+| `conversion/` | 2 | Le code de l'étape 2, un module par étape de la chaîne (cf. ci-dessous). |
 | `evaluation.py` | 3 | CSV prédits vs annotations → métriques en parquet, sur S3. |
 
 Les scripts du site vivent dans [`website/scripts/`](../website/) et ont leur propre README.
@@ -99,6 +100,25 @@ et leur tag de résolution est un remplissage. Le détail des mesures est dans l
 [README d'`api_chandra`](../api/api_chandra/README.md).
 
 ## Étape 2 — conversion (`json_to_csv.py`)
+
+### Un module par étape de la chaîne
+
+`json_to_csv.py` ne porte que la docstring d'usage et les réexports : le code vit dans le
+package `conversion/`, découpé dans l'ordre où la sortie d'un moteur le traverse. Chaque
+module ne dépend que des précédents, ce qui donne la chaîne complète en un coup d'œil et
+permet de tester chaque étape sans les suivantes.
+
+| Module | Rôle |
+|---|---|
+| `conversion/grid.py` | Mise en forme des matrices de chaînes : largeur canonique, sous-lignes d'en-tête, lignes empilées, rectangularisation. Ne connaît ni HTML, ni moteur, ni S3. |
+| `conversion/html_tables.py` | Parseur HTML tolérant : un fragment → une matrice par `<table>`, fusions comprises. |
+| `conversion/chandra.py` | Blocs de mise en page d'une page chandra, et recollage des tableaux qu'un intertitre a coupés. |
+| `conversion/extractors.py` | Un lecteur par format de sortie (marker, chandra, opendataloader), et le registre `EXTRACTORS` que la config désigne. |
+| `conversion/pipeline.py` | Lecture S3 → conversion → un CSV par tableau, et compte rendu du passage. |
+| `conversion/cli.py` | Arguments de la commande. |
+
+Les autres scripts (`evaluation.py`) et les tests importent depuis `json_to_csv` : c'est
+lui qui reste la surface publique de l'étape, quel que soit le module qui porte le code.
 
 ### La grille est rendue rectangulaire ici, et nulle part ailleurs
 
