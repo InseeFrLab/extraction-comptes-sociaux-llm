@@ -9,14 +9,14 @@ requires-python = ">=3.13"
 # api/marker_proxy. Ne pas les réintroduire ici sans un import réel.
 dependencies = [
     "extraction-common",
-    "pandas>=3.0.2",
-    "numpy>=2.0.0",
+    "pandas>=3.0.5",
+    "numpy>=2.5.2",
     "pyarrow>=24.0.0",   # moteur parquet de pandas (read_parquet / to_parquet)
     "openpyxl>=3.1.0",   # lecture des annotations XLSX (pd.read_excel)
-    "requests>=2.33.1",
+    "requests>=2.34.2",
     # Importés directement par les scripts (pas seulement via extraction-common).
-    "s3fs>=2025.3.0",
-    "python-dotenv>=1.2.2",
+    "s3fs>=2026.7.0",
+    "python-dotenv>=1.2.3",
     "pyyaml>=6.0.3",     # lecture de config/*.yaml (scripts/config.py)
 ]
 
