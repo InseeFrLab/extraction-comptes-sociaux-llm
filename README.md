@@ -2,6 +2,8 @@
 
 Extraction automatique de tableaux depuis des PDFs (comptes sociaux) via OCR et LLM.
 
+Des assistants d'IA ont par ailleurs été utilisés à divers stades du processus.
+
 Le pipeline repose sur [marker-pdf](https://github.com/datalab-to/marker) (OCR neuronal via [Surya](https://github.com/datalab-to/surya)) complété par un LLM pour la correction et la structuration des tableaux.
 
 ---
