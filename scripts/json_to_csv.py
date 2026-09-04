@@ -1,282 +1,66 @@
 #!/usr/bin/env python3
 """
-Conversion des JSONs de sortie Marker / OpenDataLoader en tableaux CSV, vers S3.
+Conversion des sorties brutes des moteurs (JSON marker/chandra, HTML OpenDataLoader) en
+tableaux CSV, vers S3.
 
-Marker      : s3://projet-extraction-tableaux/reprise/output_marker/
-               → s3://projet-extraction-tableaux/reprise/output_csv/marker/
-OpenDataLoader : s3://projet-extraction-tableaux/reprise/output_opendataloader/
-               → s3://projet-extraction-tableaux/reprise/output_csv/opendataloader/
-marker_last_work : s3://projet-extraction-tableaux/LLM_eval/response_json/
-               → s3://projet-extraction-tableaux/LLM_eval/output_csv/marker_last_work/
+Ce module est **l'entrée de l'étape 2** : la CLI, et le point d'import des autres scripts.
+Le code vit dans le package [`conversion/`](conversion/__init__.py), un module par étape de
+la chaîne — `grid` (mise en forme), `html_tables` (parseur), `chandra` (blocs et
+recollage), `extractors` (un lecteur par moteur), `pipeline` (S3), `cli` (arguments).
 
-Usage :
+Une **méthode** est un couple (corpus, moteur) : les préfixes d'entrée et de sortie,
+l'extension lue et l'extracteur qui sait la lire viennent tous de `config/*.yaml`, section
+`moteurs`. Les moteurs d'un corpus qui en déclare un sont suffixés (`chandra` pour les
+comptes sociaux, `chandra_historiques` pour les tableaux historiques) : convertir un
+nouveau moteur ne demande donc qu'une entrée dans le fichier de configuration de son
+corpus, et rien ici.
+
+**Les choix de conversion et les mesures qui les fondent sont dans [README.md](README.md)**,
+section « Étape 2 » : traitement des fusions, tolérance du parseur, découpage des lignes
+empilées, placement des sous-lignes d'en-tête, recollage des blocs chandra.
+
+Usage (`--method all` par défaut ; `--list` énumère les méthodes configurées) :
+    uv run json_to_csv.py --list
     uv run json_to_csv.py --method marker
-    uv run json_to_csv.py --method opendataloader
-    uv run json_to_csv.py --method marker_last_work
-    uv run json_to_csv.py --method chandra
-    uv run json_to_csv.py --method all          (défaut)
+    uv run json_to_csv.py --method chandra_historiques
+    uv run json_to_csv.py --method all
+    uv run json_to_csv.py --method marker --overwrite   (régénère au lieu d'ignorer)
 """
 
-import argparse
-import csv
-import io
-import json
-from abc import ABC, abstractmethod
-from html.parser import HTMLParser
-from pathlib import Path
+from conversion.chandra import _merge_chandra_blocks, _normalize_chandra_table
+from conversion.cli import main
+from conversion.extractors import (
+    EXTRACTORS,
+    ChandraTableExtractor,
+    MarkerTableExtractor,
+    OpenDataLoaderTableExtractor,
+    TableExtractor,
+)
+from conversion.grid import Table, _is_numeric_cell, _normalize_grid, _rectangularize
+from conversion.html_tables import _parse_html_tables
+from conversion.pipeline import _stale_csv_paths, _to_csv_bytes, methods, run_pipeline
 
-import s3fs
-
-from extraction_common.s3 import get_s3_fs
-
-BUCKET = "projet-extraction-tableaux"
-
-SOURCES: dict[str, dict] = {
-    "marker": {
-        "input": f"{BUCKET}/reprise/output_marker",
-        "output": f"{BUCKET}/reprise/output_csv/marker",
-        "ext": ".json",
-    },
-    "opendataloader": {
-        "input": f"{BUCKET}/reprise/output_opendataloader",
-        "output": f"{BUCKET}/reprise/output_csv/opendataloader",
-        "ext": ".html",
-    },
-    "chandra": {
-        "input": f"{BUCKET}/reprise/output_chandra",
-        "output": f"{BUCKET}/reprise/output_csv/chandra",
-        "ext": ".json",
-    },
-    "marker_last_work": {
-        "input": f"{BUCKET}/LLM_eval/response_json",
-        "output": f"{BUCKET}/LLM_eval/output_csv/marker_last_work",
-        "ext": ".json",
-        "strip_prefix": "response_",
-    },
-}
-
-Table = list[list[str]]
-
-
-# ── Extracteurs ───────────────────────────────────────────────────────────────
-
-class TableExtractor(ABC):
-    @abstractmethod
-    def extract(self, data: dict) -> list[Table]:
-        """Extraire les tableaux d'un JSON ; retourne une liste de matrices de chaînes."""
-
-
-class MarkerTableExtractor(TableExtractor):
-    """
-    Extrait les tableaux HTML imbriqués produits par l'API Marker.
-    Parcourt récursivement les blocs de type Table / TableGroup.
-    """
-
-    def extract(self, data: dict) -> list[Table]:
-        tables: list[Table] = []
-        for block in self._find_table_blocks(data):
-            html = block.get("html", "")
-            if "<table" not in html.lower():
-                html = f"<table><tbody><tr>{html}</tr></tbody></table>"
-            tables.extend(_parse_html_tables(html))
-        return tables
-
-    def _find_table_blocks(self, node) -> list[dict]:
-        results: list[dict] = []
-        if isinstance(node, list):
-            for item in node:
-                results.extend(self._find_table_blocks(item))
-        elif isinstance(node, dict):
-            if node.get("block_type") in ("Table", "TableGroup"):
-                results.append(node)
-            for child in node.get("children") or []:
-                results.extend(self._find_table_blocks(child))
-        return results
-
-
-def _normalize_chandra_table(table: Table) -> Table | None:
-    """
-    Nettoie un tableau Chandra :
-    - Détermine la largeur canonique sur les lignes avec ≥2 cellules non-vides.
-    - Complète toutes les lignes (y compris les lignes-labels à 1 cellule) jusqu'à
-      cette largeur, afin de conserver les en-têtes de section dans le CSV.
-    Retourne None si le tableau ne contient aucune ligne de données (≥2 cellules).
-    """
-    data_rows = [row for row in table if sum(1 for c in row if c.strip()) > 1]
-    if not data_rows:
-        return None
-    max_cols = max(len(r) for r in data_rows)
-    return [r + [""] * (max_cols - len(r)) for r in table]
-
-
-class ChandraTableExtractor(TableExtractor):
-    """
-    Extrait les tableaux depuis la sortie JSON de l'API Chandra.
-
-    Format attendu :
-    {
-      "pages": [
-        {"page": 1, "tables": [[["col1", "col2"], ["val1", "val2"]], ...]},
-        ...
-      ]
-    }
-    """
-
-    def extract(self, data: dict) -> list[Table]:
-        tables = []
-        for page in data.get("pages", []):
-            for table in page.get("tables", []):
-                if table:
-                    normalized = _normalize_chandra_table(table)
-                    if normalized:
-                        tables.append(normalized)
-        return tables
-
-
-class OpenDataLoaderTableExtractor(TableExtractor):
-    """
-    Extrait les tableaux depuis la sortie HTML d'OpenDataLoader en mode hybrid docling-fast.
-    Docling reconstruit les cellules individuellement → HTML avec vraies balises <table>/<td>.
-    Réutilise le même parseur HTML que Marker.
-    """
-
-    def extract(self, data: str) -> list[Table]:
-        return _parse_html_tables(data)
-
-
-# ── Parser HTML interne (Marker) ──────────────────────────────────────────────
-
-class _TableHTMLParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.tables: list[Table] = []
-        self._rows: list[list[str]] = []
-        self._row: list[str] = []
-        self._cell: str = ""
-        self._in_cell: bool = False
-        self._colspan: int = 1
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("th", "td"):
-            self._in_cell = True
-            self._cell = ""
-            attrs_dict = dict(attrs)
-            try:
-                self._colspan = int(attrs_dict.get("colspan", 1))
-            except (ValueError, TypeError):
-                self._colspan = 1
-        elif tag == "br" and self._in_cell:
-            self._cell += " "
-        elif tag == "tr":
-            self._row = []
-        elif tag == "table":
-            self._rows = []
-
-    def handle_endtag(self, tag):
-        if tag in ("th", "td"):
-            self._in_cell = False
-            self._row.append(self._cell.strip())
-            for _ in range(self._colspan - 1):
-                self._row.append("")
-            self._colspan = 1
-        elif tag == "tr" and self._row:
-            self._rows.append(self._row)
-        elif tag == "table" and self._rows:
-            self.tables.append(self._rows)
-
-    def handle_data(self, data):
-        if self._in_cell:
-            self._cell += data.replace("\n", " ")
-
-
-def _parse_html_tables(html: str) -> list[Table]:
-    parser = _TableHTMLParser()
-    parser.feed(html)
-    return parser.tables
-
-
-# ── Sérialisation ─────────────────────────────────────────────────────────────
-
-def _to_csv_bytes(table: Table) -> bytes:
-    buf = io.StringIO()
-    csv.writer(buf, delimiter=";").writerows(table)
-    return buf.getvalue().encode("utf-8-sig")
-
-
-# ── Pipeline S3 ───────────────────────────────────────────────────────────────
-
-def _load(fs: s3fs.S3FileSystem, path: str, ext: str):
-    """Charge un fichier S3 : renvoie un dict (JSON) ou une str (HTML)."""
-    if ext == ".json":
-        with fs.open(path, "rb") as f:
-            return json.load(f)
-    else:
-        with fs.open(path, "r", encoding="utf-8") as f:
-            return f.read()
-
-
-def run_pipeline(method: str, fs: s3fs.S3FileSystem) -> None:
-    cfg = SOURCES[method]
-    ext = cfg["ext"]
-    strip_prefix = cfg.get("strip_prefix", "")
-    extractors: dict[str, TableExtractor] = {
-        "marker":           MarkerTableExtractor(),
-        "marker_last_work": MarkerTableExtractor(),
-        "opendataloader":   OpenDataLoaderTableExtractor(),
-        "chandra":          ChandraTableExtractor(),
-    }
-    extractor = extractors[method]
-
-    input_files = sorted(fs.glob(f"{cfg['input']}/*{ext}"))
-    print(f"[{method}] {len(input_files)} fichier(s) trouvé(s)\n")
-
-    ok = skipped = errors = 0
-    for file_key in input_files:
-        raw_stem = Path(file_key).stem
-        siren = raw_stem.removeprefix(strip_prefix) if strip_prefix else raw_stem
-        if fs.exists(f"{cfg['output']}/{siren}_1.csv"):
-            print(f"  [SKIP]  {siren}")
-            skipped += 1
-            continue
-
-        try:
-            data = _load(fs, file_key, ext)
-            tables = extractor.extract(data)
-        except Exception as e:
-            print(f"  [ERR]   {siren}: {e}")
-            errors += 1
-            continue
-
-        if not tables:
-            print(f"  [VIDE]  {siren}: aucun tableau détecté")
-            errors += 1
-            continue
-
-        for i, table in enumerate(tables, start=1):
-            fs.pipe(f"{cfg['output']}/{siren}_{i}.csv", _to_csv_bytes(table))
-
-        print(f"  [OK]    {siren}: {len(tables)} tableau(x)")
-        ok += 1
-
-    print(f"\n[{method}] terminé — {ok} traité(s), {skipped} ignoré(s), {errors} sans tableau\n")
-
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Conversion JSON → CSV (Marker / OpenDataLoader)")
-    parser.add_argument(
-        "--method",
-        choices=["marker", "opendataloader", "chandra", "marker_last_work", "all"],
-        default="all",
-        help="Source à convertir (défaut : all)",
-    )
-    args = parser.parse_args()
-
-    fs = get_s3_fs()
-    methods = list(SOURCES) if args.method == "all" else [args.method]
-    for method in methods:
-        run_pipeline(method, fs)
+# Ce que les autres scripts, les tests et le site nomment. Les réexports gardent
+# `from json_to_csv import …` valable quel que soit le module qui porte désormais le code.
+__all__ = [
+    "EXTRACTORS",
+    "ChandraTableExtractor",
+    "MarkerTableExtractor",
+    "OpenDataLoaderTableExtractor",
+    "Table",
+    "TableExtractor",
+    "_is_numeric_cell",
+    "_merge_chandra_blocks",
+    "_normalize_chandra_table",
+    "_normalize_grid",
+    "_parse_html_tables",
+    "_rectangularize",
+    "_stale_csv_paths",
+    "_to_csv_bytes",
+    "main",
+    "methods",
+    "run_pipeline",
+]
 
 
 if __name__ == "__main__":

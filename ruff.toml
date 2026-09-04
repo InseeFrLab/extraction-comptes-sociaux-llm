@@ -1,0 +1,20 @@
+# Config ruff partagée par tous les sous-projets (api/, libs/, scripts/, tests/).
+line-length = 100
+target-version = "py313"
+exclude = ["legacy", ".venv"]
+
+[lint]
+select = [
+    "E4", "E7", "E9",  # pycodestyle (erreurs)
+    "F",               # pyflakes
+    "I",               # isort (ordre des imports)
+    "UP",              # pyupgrade (syntaxe moderne)
+    "B",               # flake8-bugbear (pièges courants)
+]
+ignore = [
+    "B008",  # appel dans un défaut d'argument : idiome FastAPI (File(...), Depends()).
+    "B904",  # raise ... from : à réactiver une fois les handlers HTTPException repris.
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]  # les tests ajustent sys.path avant d'importer les modules de scripts/.

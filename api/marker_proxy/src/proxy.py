@@ -1,10 +1,11 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
-import openai as openai_errors
+import logging
 import os
 import re
+from contextlib import asynccontextmanager
+
+import openai as openai_errors
 from dotenv import load_dotenv
-import logging
+from fastapi import FastAPI, HTTPException, Request
 
 load_dotenv()
 
@@ -31,9 +32,7 @@ os.environ.setdefault("REAL_LLM_BASE_URL", "https://llm.lab.sspcloud.fr/v1")
 REAL_LLM_BASE_URL = os.getenv("REAL_LLM_BASE_URL", "").rstrip("/")
 REAL_LLM_API_KEY = os.getenv("REAL_LLM_API_KEY")
 
-LANGFUSE_ENABLED = bool(
-    os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")
-)
+LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 
 if LANGFUSE_ENABLED:
     from langfuse import get_client
@@ -85,7 +84,10 @@ async def chat_completions(request: Request):
 
     # json_schema (structured outputs) non supporté par tous les LLMs :
     # on convertit en json_object et on injecte le schéma dans le prompt
-    if isinstance(data.get("response_format"), dict) and data["response_format"].get("type") == "json_schema":
+    if (
+        isinstance(data.get("response_format"), dict)
+        and data["response_format"].get("type") == "json_schema"
+    ):
         schema = data["response_format"].get("json_schema", {}).get("schema", {})
         properties = schema.get("properties", {})
         required = schema.get("required", list(properties.keys()))

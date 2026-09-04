@@ -1,0 +1,63 @@
+---
+title: "Comparaison des tableaux"
+subtitle: "Grille annotée à la main face à la grille extraite, cellule par cellule"
+toc: false
+---
+
+Chaque tableau annoté est confronté à ce que chaque moteur en a extrait. **La couleur porte
+sur la grille annotée**, qui est la référence : statut de chaque valeur dans la zone de
+données, vert ou rouge sur les en-têtes de lignes et de colonnes selon qu'ils ont été
+appariés. La grille extraite reste neutre. Survoler une cellule met en évidence la cellule —
+ou la ligne, ou la colonne — appariée dans la prédiction, ce qui rend le décalage
+directement lisible.
+
+::: {.callout-note appearance="simple"}
+## Origine des grilles
+
+Les grilles extraites sont les CSV de `reprise/output_csv/`, produits par [la conversion
+décrite ici](conversion.qmd). Les décalages de colonnes visibles relèvent soit des fusions
+que le format d'entrée ne transmet pas, soit d'un écart de structure d'en-tête présent dès
+la source.
+
+Le statut de chaque cellule est celui de l'[échelle de classement](evaluation.qmd#classement)
+de la page Évaluation : chaque cellule tombe dans la première catégorie qui s'applique, de
+la structure vers la lecture.
+:::
+
+{{< include _comparateur.qmd >}}
+
+::: {.callout-note appearance="simple" collapse="true"}
+## Comment lire ces grilles
+
+- **Les en-têtes de lignes et de colonnes de la grille annotée sont verts ou rouges** selon
+  que leur libellé a été apparié à celui de la prédiction. Rouge = les valeurs de cette
+  ligne ou de cette colonne ne peuvent pas être comparées, quoi qu'ait lu le moteur. Le
+  coin haut-gauche, qui relève des deux axes, reste neutre.
+- **Les numéros de lignes et colonnes** reprennent la même couleur, pour rester lisibles
+  quand la grille défile ; ils sont ceux de la grille brute, à partir de zéro.
+- **Survoler un en-tête** met en évidence la ligne ou la colonne appariée dans la grille
+  extraite.
+- **La zone d'en-tête grisée** est celle détectée par `detect_column_header_height` et
+  `detect_row_header_width`, pas celle de la maquette d'origine. Deux zones grisées de
+  hauteurs différentes = tout le reste du tableau est décalé — la cause d'échec principale
+  du pipeline.
+- **Seules les cellules de la zone de données de l'annotation portent un statut.** En-têtes
+  et cellules non numériques ne sont pas évalués et restent neutres.
+- **« Valeur extraite mais ailleurs »** = la valeur attendue existe dans le CSV, mais pas à
+  la position appariée. C'est le cas le plus fréquent et le plus révélateur : la lecture est
+  bonne, le placement non.
+- **Les libellés sont affichés tels quels**, raisons sociales comprises : un écart de
+  libellé est lui-même un symptôme, il doit rester visible. Chaque tableau est désigné par
+  son nom de fichier d'origine (`{siren}_{rang}`).
+- **Le volet « Document d'origine »**, sous les grilles, montre le scan dont elles sont
+  tirées — toutes les pages du PDF source. Il est replié par défaut : l'image n'est
+  téléchargée qu'à l'ouverture.
+:::
+
+```{=html}
+<script>
+  window.DX_SOURCE = "data/comparaisons.json";
+  window.DX_BASE = "../";
+</script>
+<script src="../js/comparateur.js"></script>
+```

@@ -1,7 +1,8 @@
-import pymupdf as fitz
-from PIL import Image
 import io
 import os
+
+import pymupdf as fitz
+from PIL import Image
 
 
 def pdf_to_image(pdf_path, output_dir, dpi=300):
@@ -20,7 +21,7 @@ def pdf_to_image(pdf_path, output_dir, dpi=300):
         pdf_document = fitz.open(pdf_path)
 
         page = pdf_document[0]
-        mat = fitz.Matrix(dpi/72, dpi/72)
+        mat = fitz.Matrix(dpi / 72, dpi / 72)
         pix = page.get_pixmap(matrix=mat)
         img = Image.open(io.BytesIO(pix.tobytes("png")))
 
@@ -29,8 +30,8 @@ def pdf_to_image(pdf_path, output_dir, dpi=300):
         img.save(image_path, "PNG", optimize=True)
 
         pdf_document.close()
-        
+
         return image_path
-        
+
     except Exception as e:
         raise Exception(f"Erreur lors de la conversion PDF vers image: {str(e)}")

@@ -1,19 +1,25 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
 import os
 import shutil
 import tempfile
 import threading
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 
 # Réduit la fragmentation de l'allocateur CUDA entre requêtes : sur un run long, la VRAM
 # réservée se fragmente et une page dense peut OOM faute de bloc contigu, alors qu'elle
 # tiendrait à froid. À définir AVANT toute initialisation du contexte CUDA (import torch).
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-from dotenv import load_dotenv
 import torch
-from data_management.extract_image_to_json import extract_pdf, load_models, PdfConversionError, MarkerConversionError
+from data_management.extract_image_to_json import (
+    MarkerConversionError,
+    PdfConversionError,
+    extract_pdf,
+    load_models,
+)
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -79,4 +85,5 @@ def extract(pdf: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)

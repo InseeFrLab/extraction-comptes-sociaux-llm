@@ -1,17 +1,16 @@
-import os
 import json
-from dotenv import load_dotenv
 import logging
+import os
+from io import BytesIO
+from typing import Any
+
 import requests
+import s3fs
+from dotenv import load_dotenv
+from extraction_common.s3 import get_s3_fs
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
-import fitz  # PyMuPDF
-import s3fs
 from PyPDF2 import PdfReader, PdfWriter
-from io import BytesIO
-
-from extraction_common.s3 import get_s3_fs
 
 # Charger .env
 load_dotenv()
@@ -20,7 +19,9 @@ load_dotenv()
 INPI_USERNAME = os.getenv("INPI_USERNAME")
 INPI_PASSWORD = os.getenv("INPI_PASSWORD")
 INPI_LOGIN_URL = "https://registre-national-entreprises.inpi.fr/api/sso/login"
-INPI_ATTACHMENTS_URL = "https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments"
+INPI_ATTACHMENTS_URL = (
+    "https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments"
+)
 INPI_DOWNLOAD_URL = "https://registre-national-entreprises.inpi.fr/api/bilans/{identifier}/download"
 
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
@@ -37,47 +38,52 @@ app = FastAPI(
     description="Endpoints : PDF INPI → select_page → Marker, liste des fichiers S3",
     openapi_url="/openapi.json",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 # Modèles de réponse
 class ExtractionResponse(BaseModel):
     siren: str
     year: str
     page: int
-    marker: Dict[str, Any]
+    marker: dict[str, Any]
+
 
 class S3FileListResponse(BaseModel):
-    files: List[str]
+    files: list[str]
+
 
 # Auth INPI
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token: str):
         self.token = token
+
     def __call__(self, r: requests.PreparedRequest):
         r.headers["Authorization"] = f"Bearer {self.token}"
         return r
 
-_token_cache: Dict[str, Any] = {}
+
+_token_cache: dict[str, Any] = {}
+
 
 def get_inpi_token() -> str:
     resp = requests.post(
-        INPI_LOGIN_URL,
-        json={"username": INPI_USERNAME, "password": INPI_PASSWORD},
-        timeout=30
+        INPI_LOGIN_URL, json={"username": INPI_USERNAME, "password": INPI_PASSWORD}, timeout=30
     )
     if resp.status_code != 200:
         logger.error("Échec auth INPI %s: %s", resp.status_code, resp.text)
         raise HTTPException(502, "Authentification INPI échouée")
-    token = resp.json().get('token')
+    token = resp.json().get("token")
     if not token:
         logger.error("INPI n'a pas retourné de token : %s", resp.text)
         raise HTTPException(502, "Token INPI manquant")
-    _token_cache['token'] = token
+    _token_cache["token"] = token
     return token
+
 
 # Helpers S3
 
@@ -85,10 +91,13 @@ def get_inpi_token() -> str:
 def file_exists_s3(fs: s3fs.S3FileSystem, filename: str) -> bool:
     return fs.exists(f"{AWS_S3_BUCKET}/{filename}")
 
+
 def upload_to_s3(fs: s3fs.S3FileSystem, filename: str, content: bytes):
     fs.pipe(f"{AWS_S3_BUCKET}/{filename}", content)
 
+
 # Download PDF INPI
+
 
 def fetch_pdf_inpi(siren: str, year: str) -> bytes:
     token = get_inpi_token()
@@ -99,11 +108,11 @@ def fetch_pdf_inpi(siren: str, year: str) -> bytes:
         raise HTTPException(502, "Impossible de récupérer la liste des actes INPI")
     docs = resp.json()
 
-    actes = docs.get('bilans', [])
-    candidats = [a for a in actes if a.get('dateDepot', '').startswith(str(year))]
+    actes = docs.get("bilans", [])
+    candidats = [a for a in actes if a.get("dateDepot", "").startswith(str(year))]
     if not candidats:
         raise HTTPException(404, f"Aucun acte INPI trouvé pour l'année {year}")
-    identifier = candidats[0].get('id')
+    identifier = candidats[0].get("id")
     logger.info("Document identifier : %s", identifier)
 
     dl_url = INPI_DOWNLOAD_URL.format(identifier=identifier)
@@ -113,7 +122,9 @@ def fetch_pdf_inpi(siren: str, year: str) -> bytes:
         raise HTTPException(502, "Téléchargement du PDF INPI échoué")
     return r.content
 
+
 # Sélection et extraction de page
+
 
 def select_page(pdf: bytes) -> int:
     files = {"pdf_file": ("report.pdf", pdf, "application/pdf")}
@@ -159,12 +170,12 @@ def extract(siren: str, year: str = Query(..., description="Année du bilan à r
     fs = get_s3_fs()
     filename = f"{siren}_{year}.json"
 
-    if False : #file_exists_s3(fs, filename):
+    if False:  # file_exists_s3(fs, filename):
         logger.info(f"Le fichier {filename} existe déjà sur S3.")
-        raw = fs.open(f"{AWS_S3_BUCKET}/{filename}", 'rb').read()
+        raw = fs.open(f"{AWS_S3_BUCKET}/{filename}", "rb").read()
         data = json.loads(raw)
-        page = data.get('page', -1)
-        marker_data = data.get('marker', {})
+        page = data.get("page", -1)
+        marker_data = data.get("marker", {})
     else:
         pdf = fetch_pdf_inpi(siren, year)
         page = select_page(pdf)
@@ -177,10 +188,11 @@ def extract(siren: str, year: str = Query(..., description="Année du bilan à r
             raise HTTPException(502, "Traitement Marker échoué")
         marker_data = r.json()
 
-        #upload_to_s3(fs, filename, json.dumps({"page": page, "marker": marker_data}).encode())
+        # upload_to_s3(fs, filename, json.dumps({"page": page, "marker": marker_data}).encode())
         logger.info(f"Résultat {filename} ajouté à S3.")
 
     return ExtractionResponse(siren=siren, year=year, page=page, marker=marker_data)
+
 
 # Endpoint liste fichiers S3
 @app.get("/files", response_model=S3FileListResponse)
@@ -188,7 +200,9 @@ def list_s3_files():
     fs = get_s3_fs()
     try:
         keys = fs.ls(AWS_S3_BUCKET)
-        files = [key.split('/', 1)[1] if key.startswith(f"{AWS_S3_BUCKET}/") else key for key in keys]
+        files = [
+            key.split("/", 1)[1] if key.startswith(f"{AWS_S3_BUCKET}/") else key for key in keys
+        ]
         return S3FileListResponse(files=files)
     except Exception as e:
         logger.error("Erreur d'accès à S3 : %s", str(e))

@@ -1,0 +1,99 @@
+# Corpus « comptes sociaux » — PDF scannés, référence XLSX.
+#
+# Tout ce que le pipeline lit et écrit pour ce corpus, et tous ses réglages de traitement.
+# Les scripts n'en portent aucun en dur : ils lisent ce fichier via `scripts/config.py`.
+#
+# Les chemins sont **relatifs au bucket** ; le chargeur les préfixe. Un chemin qui change
+# ici change partout — extraction, conversion, mesure et site.
+
+nom: comptes-sociaux
+bucket: projet-extraction-tableaux
+
+# Entrées du corpus, communes à toutes les étapes.
+sources:
+  pdf: pdf/tableaux_representatifs
+  annotations: annotations/clean
+  # Appariement PDF ↔ annotations, produit par `comparaison_pdf_csv.py` puis relu par
+  # l'extraction, la mesure et les aperçus du site.
+  correspondances: reprise/correspondances.parquet
+
+# Étape 3 — mesure (`scripts/evaluation.py`).
+evaluation:
+  sortie: reprise/eval/evaluation.parquet
+  # Similarité de Levenshtein minimale pour apparier deux en-têtes. Sous 0,5 des libellés
+  # sans rapport s'apparient ; au-dessus, une abréviation légitime ne s'apparie plus.
+  seuil_similarite: 0.5
+  # Tolérance en colonnes (±) pour `total_extraction`. 0 = la valeur doit être exactement
+  # à la position appariée.
+  tolerance_colonnes: 0
+  # Une annotation est appariée à la prédiction de même rang, au sein d'un SIREN.
+  appariement: rang
+  # Largeur de la colonne des noms à l'affichage (les noms sont des SIREN suffixés).
+  largeur_nom: 30
+
+# Ce que le site publie de ce corpus (`website/scripts/`).
+site:
+  # `meta.source` du JSON de comparaison, montré en tête de page.
+  racine: reprise/
+  # Chemin du JSON de comparaison, relatif à `website/`.
+  donnees: data/comparaisons.json
+  build: website/scripts/build_data.py
+  apercus:
+    prefixe: reprise/apercus
+    # Grand côté et qualité JPEG des aperçus : assez pour lire un tableau dense, assez peu
+    # pour que les 95 aperçus du site tiennent dans quelques dizaines de mégaoctets.
+    cote_max: 2200
+    qualite_jpeg: 78
+
+# Les moteurs d'extraction comparés sur ce corpus.
+#
+#   api        présent = le moteur est piloté par `extraction_pdf_via_api.py` ; l'URL est
+#              surchargeable par la variable d'environnement nommée.
+#   json/csv   préfixes S3 des deux étapes : sortie de l'extraction, sortie de la conversion.
+#   extension  extension des fichiers produits par l'API, et lus par la conversion.
+#   extracteur extracteur de `json_to_csv.py` qui sait lire ce format.
+#   publie     le site montre ce moteur (les autres restent mesurés, non publiés).
+moteurs:
+  marker:
+    api:
+      url: http://localhost:8001
+      variable_url: API_MARKER_URL
+    json: reprise/output_marker
+    csv: reprise/output_csv/marker
+    extension: .json
+    extracteur: marker
+    publie: true
+    # Marker reçoit le PDF entier et rend parfois d'un seul tenant un tableau que
+    # l'annotation coupe en deux pages : on regroupe alors les annotations pour sa seule
+    # référence. Les moteurs appelés page par page ne sont pas concernés.
+    fusion_coupures_page: true
+
+  opendataloader:
+    api:
+      url: http://localhost:8002
+      variable_url: API_OPENDATALOADER_URL
+    json: reprise/output_opendataloader
+    csv: reprise/output_csv/opendataloader
+    extension: .html
+    extracteur: opendataloader
+
+  chandra:
+    api:
+      url: http://localhost:8003
+      variable_url: API_CHANDRA_URL
+    json: reprise/output_chandra
+    csv: reprise/output_csv/chandra
+    extension: .json
+    extracteur: chandra
+    publie: true
+
+  # Sorties d'une campagne antérieure, conservées pour comparaison : plus rien ne les
+  # produit, d'où l'absence de bloc `api`. Elles s'apparient par le parquet de
+  # correspondances, et non rang à rang.
+  marker_last_work:
+    json: LLM_eval/response_json
+    csv: LLM_eval/output_csv/marker_last_work
+    extension: .json
+    extracteur: marker
+    retirer_prefixe: response_
+    appariement: correspondances

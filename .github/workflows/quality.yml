@@ -1,0 +1,53 @@
+name: Lint & Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Une PR mise à jour annule le run précédent au lieu d'empiler les jobs.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Épinglé pour que la CI et les postes de dev signalent exactement les mêmes erreurs.
+  # À monter en même temps que la version installée localement (`uv tool install ruff==...`).
+  RUFF_VERSION: "0.16.2"
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # --output-format=github : les erreurs s'affichent en annotations sur le diff de la PR.
+      - name: ruff check
+        run: uvx ruff@${{ env.RUFF_VERSION }} check --output-format=github .
+
+      - name: ruff format --check
+        run: uvx ruff@${{ env.RUFF_VERSION }} format --check .
+
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "scripts/uv.lock"
+
+      # --frozen : échoue si uv.lock n'est plus cohérent avec pyproject.toml,
+      # au lieu de le régénérer silencieusement.
+      - name: pytest
+        run: uv run --project scripts --frozen pytest

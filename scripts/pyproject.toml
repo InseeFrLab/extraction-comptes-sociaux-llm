@@ -4,16 +4,26 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
+# Les scripts pilotent les APIs via HTTP (requests) : ils n'embarquent ni marker-pdf,
+# ni torch, ni pymupdf, ni langfuse — ces dépendances vivent dans api/api_marker et
+# api/marker_proxy. Ne pas les réintroduire ici sans un import réel.
 dependencies = [
     "extraction-common",
-    "pymupdf>=1.24.0",
-    "marker-pdf>=1.10.2",
     "pandas>=3.0.2",
-    "pyarrow>=24.0.0",
+    "numpy>=2.0.0",
+    "pyarrow>=24.0.0",   # moteur parquet de pandas (read_parquet / to_parquet)
+    "openpyxl>=3.1.0",   # lecture des annotations XLSX (pd.read_excel)
     "requests>=2.33.1",
-    "langfuse>=4.5.1",
-    "openpyxl>=3.1.0",
+    # Importés directement par les scripts (pas seulement via extraction-common).
+    "s3fs>=2025.3.0",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",     # lecture de config/*.yaml (scripts/config.py)
 ]
+
+[dependency-groups]
+# Les tests de `tests/` (racine) tournent dans ce venv : il expose déjà pandas/numpy
+# et `extraction-common` en éditable.
+dev = ["pytest>=8.0"]
 
 [tool.uv.sources]
 # editable = true : sinon les modifs de libs/src/** ne sont pas prises en compte sans

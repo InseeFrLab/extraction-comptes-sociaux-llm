@@ -183,3 +183,66 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spécifique au projet
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Secrets / configuration locale
+# .env est déjà ignoré plus haut ; on couvre les variantes (.env.local, .env.prod…)
+# tout en gardant le fichier d'exemple versionné.
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+.aws/
+
+# Données extraites et annotations (comptes sociaux : ne doivent jamais être commitées).
+# Les PDFs et images sont déjà couverts plus haut (*.pdf, *.png, *.jpg, *.webp).
+*.csv
+*.xlsx
+*.xls
+*.parquet
+data/
+output/
+output_*/
+response_json/
+
+# Site Quarto : sortie de rendu. Les données de comparaison (website/data/) sont déjà
+# couvertes par la règle `data/` ci-dessus — elles sont reconstruites depuis S3 à chaque
+# build et ne doivent jamais être commitées.
+website/_site/
+website/.quarto/
+
+# Poids de modèles (récupérés depuis S3, jamais versionnés)
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+models/
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# Fixtures de test : exemptées des règles ci-dessus et des patterns globaux
+# (*.pdf, *.csv, *.xlsx…), sinon impossible d'ajouter un jeu d'essai versionné.
+!tests/fixtures/**
+
+# Éditeurs / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Outils locaux
+.claude/settings.local.json
+
+# Systèmes de fichiers
+.DS_Store
+Thumbs.db
+desktop.ini

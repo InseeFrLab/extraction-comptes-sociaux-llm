@@ -1,0 +1,120 @@
+---
+title: "Extraire les tableaux des comptes sociaux"
+subtitle: "Ce que fait le projet, sur quel corpus, et où il en est"
+toc: false
+---
+
+Les comptes sociaux déposés par les entreprises et publiés en open data par l'INPI
+contiennent un tableau réglementaire, celui des **filiales et participations**. Ce tableau porte, pour
+chaque société détenue, son capital, ses capitaux propres, la quote-part détenue, la
+valeur des titres, le chiffre d'affaires et le résultat. Ces documents sont des **PDF
+scannés** : l'information n'existe que sous forme d'image.
+
+Le projet automatise le passage de ce scan à un fichier CSV exploitable. Pour cela, plusieurs étapes sont réalisées :
+  - chargement des images scannées (le pdf a été préalablement découpé pour en retenir la page d'intérêt)
+  - extraction des tableaux à l'aide de modèles de vision / multimodaux
+  - mise en forme des tableaux à partir des extractions
+  - évaluation de l'extraction à partir de fichiers d'annotations (1 seul annotateur)
+
+Chaque pdf peut comporter un ou plusieurs tableaux et dispose d'un fichier annoté pour chaque tableau présent dans la page.
+
+::: {.callout-note appearance="simple" collapse="true"}
+## Le problème n'est pas de lire les caractères
+
+Neuf valeurs sur dix sont correctement lues par les deux moteurs. Un peu plus d'une sur
+deux arrive dans la bonne cellule chez marker, quatre sur cinq chez chandra. **L'écart
+entre les deux tient à la grille, pas à l'OCR** — c'est ce qui oriente tout le reste du
+travail.
+:::
+
+## La chaîne de traitement
+
+```{=html}
+<div class="dx-flow">
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">1. Extraction</span>
+    <span class="dx-flow-desc">Chaque moteur, par le biais d'une API reçoit le PDF et rend sa lecture de
+      la page. <span class="dx-flow-code">api_marker</span> fait tourner l'OCR neuronal
+      Surya sur GPU puis fait corriger les tableaux par un LLM ;
+      <span class="dx-flow-code">api_chandra</span> envoie chaque page en image à un VLM
+      qui rend directement du HTML.</span>
+  </div>
+  <div class="dx-flow-arrow">JSON par document (arbre de blocs (marker) ou HTML par page (chandra))</div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">2. Mise en forme</span>
+    <span class="dx-flow-desc">
+      <span class="dx-flow-code">json_to_csv.py</span> transforme cette sortie JSON en une
+      grille de lignes et de colonnes au format CSV (un fichier par tableau) : fusions développées, blocs recollés, grille
+      rectangularisée.</span>
+  </div>
+  <div class="dx-flow-arrow">un CSV par tableau : <span class="dx-flow-code">{siren}_{n}.csv</span></div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">3. Évaluation</span>
+    <span class="dx-flow-desc">
+      <span class="dx-flow-code">evaluation.py</span> confronte chaque CSV au
+      tableau annoté à la main (format XLSX) : zones d'en-tête délimitées, libellés et nombres
+      normalisés, lignes et colonnes appariées, cellules comparées.</span>
+  </div>
+  <div class="dx-flow-arrow">quatre métriques par paire — <span class="dx-flow-code">evaluation.parquet</span></div>
+  <div class="dx-flow-step">
+    <span class="dx-flow-name">4. Diagnostic</span>
+    <span class="dx-flow-desc">Chaque cellule attendue est classée selon ce qui
+      lui est arrivé, ce qui permet de distinguer une erreur de lecture d'un décalage de
+      grille, et de chiffrer ce que corrigerait chaque piste.</span>
+  </div>
+</div>
+```
+
+## Le corpus de référence
+
+| Élément | Compte |
+|---|---:|
+| PDF de comptes sociaux scannés (`s3://projet-extraction-tableaux/reprise/`) | 48 |
+| Pages traitées | 55 |
+| Tableaux annotés à la main (`annotations/clean/*.xlsx`) | 77 |
+| Paires annotation / prédiction évaluées | 148 — marker 72, chandra 76 |
+
+Les annotations sont des XLSX saisis à la main, une feuille par tableau. Elles font
+référence pour tout ce qui suit : aucune mesure de ce site ne compare deux moteurs entre
+eux, toutes comparent un moteur à cette référence.
+
+### Un second corpus : les tableaux historiques
+
+Le même pipeline a été passé sur 40 **tableaux statistiques historiques** scannés, de 1876
+à 2011, annotés en HTML. Ils diffèrent des comptes sociaux sur trois points : l'entrée est
+une image et non un PDF, la référence est du HTML et non un XLSX, et seul chandra a été
+joué — marker demande un GPU. Le résultat y est nettement plus dur : **92,6 % des valeurs
+attendues sont lues, mais 32,8 % seulement arrivent dans la bonne cellule**, contre 83 % sur
+les comptes sociaux. Le détail est sur la page
+[Résultats — tableaux historiques](pages/resultats-historiques.qmd), les grilles sur
+[Comparaison — tableaux historiques](pages/comparaison-historiques.qmd).
+
+
+## Les pages du site
+
+- [**Architecture**](pages/architecture.qmd) : les deux moteurs, les services qui les servent,
+  et de vrais exemples de leur sortie sur le même PDF.
+- [**Du JSON au CSV**](pages/conversion.qmd) : les six étapes qui transforment la sortie d'un
+  moteur en grille de lignes et de colonnes.
+- [**Évaluation**](pages/evaluation.qmd) : comment une paire est constituée, ce qui est
+  normalisé, comment lignes et colonnes sont appariées, et ce que valent les quatre
+  métriques.
+- [**Résultats**](pages/resultats.qmd) : l'ensemble des mesures sur les comptes sociaux :
+  attrition, catégories d'erreur, effet de la taille, cas pathologiques, limites.
+- [**Résultats — tableaux historiques**](pages/resultats-historiques.qmd) : les mêmes mesures sur
+  le second corpus, et les deux causes d'échec qui lui sont propres.
+- [**Problèmes de mise en forme**](pages/mise-en-forme.qmd) : quand l'annotation et le moteur
+  écrivent le même tableau autrement, et que la mesure compte une perte à tort.
+- [**Améliorations**](pages/ameliorations.qmd) : cinq leviers classés par gain mesuré.
+- [**Comparaison des tableaux**](pages/comparaison.qmd) : grille annotée face à grille
+  extraite, cellule par cellule, sur les 148 paires des comptes sociaux — et
+  [sur les 38 paires](pages/comparaison-historiques.qmd) des tableaux historiques.
+
+::: {.callout-note appearance="simple"}
+## Données affichées
+
+Raisons sociales, SIREN et montants sont affichés tels que lus par le pipeline, sans
+transformation : c'est l'objet du diagnostic. Le corpus provient de comptes sociaux
+déposés, publiés en open data par l'INPI ; chaque tableau porte son nom de fichier
+d'origine, qui contient le SIREN du déposant.
+:::

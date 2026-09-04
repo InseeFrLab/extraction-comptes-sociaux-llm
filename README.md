@@ -40,10 +40,16 @@ extraction-comptes-sociaux-llm/
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
 │   │
-│   └── api_chandra/          (port 8003) ← extraction via le VLM Chandra (vllm) : chaque page
-│       │                                   est envoyée en image, Chandra renvoie du HTML <table>
+│   └── api_chandra/          (port 8003) ← extraction via le VLM Chandra (vllm) : /extract prend
+│       │                                   un `pdf` (rendu page par page) ou une `image` (envoyée
+│       │                                   telle quelle), Chandra renvoie du HTML <table>
 │       ├── src/main_chandra.py            ← parsé ensuite en JSON
+│       ├── README.md                     ← les choix de conception et les mesures qui les fondent
 │       └── pyproject.toml / uv.lock
+│
+├── config/                               ← un fichier par corpus d'origine : chemins S3, moteurs
+│   ├── comptes-sociaux.yaml                comparés, paramètres transmis aux APIs, seuils de la
+│   └── historiques.yaml                    mesure et réglages du site (cf. section Configuration)
 │
 ├── libs/                                 ← package partagé `extraction-common` (installé éditable)
 │   ├── pyproject.toml
@@ -55,11 +61,28 @@ extraction-comptes-sociaux-llm/
 │           └── pdf_to_image.py           ← conversion PDF → image (PyMuPDF)
 │
 ├── scripts/                              ← orchestration & évaluation (lancés en local via uv)
+│   ├── README.md                         ← les choix du pipeline et les mesures qui les fondent,
+│   │                                       plus le démarrage des APIs
+│   ├── config.py                         ← lecture de config/*.yaml : aucun chemin ni réglage de
+│   │                                       traitement n'est écrit en dur dans les scripts
 │   ├── extraction_pdf_via_api.py         ← pilote : lit les PDFs sur S3 → API → écrit le JSON sur S3
+│   ├── extraction_historiques.py         ← le même pilote, sur le corpus des tableaux historiques
+│   ├── corpus_historiques.py             ← conventions de nommage de ce corpus
 │   ├── json_to_csv.py                    ← convertit les JSON de sortie (marker/ODL) en CSV sur S3
+│   ├── conversion/                       ← le code de cette conversion : grid, html_tables, chandra,
+│   │                                       extractors, pipeline, cli
 │   ├── comparaison_pdf_csv.py            ← apparie PDFs et annotations XLSX de référence
-│   ├── evaluation_extraction.py          ← compare CSV prédits vs annotations XLSX (métriques)
+│   ├── evaluation.py                     ← compare CSV prédits et annotations (métriques), les deux
+│   │                                       corpus : `--corpus comptes-sociaux|historiques|all`
 │   └── pyproject.toml / uv.lock
+│
+├── website/                              ← le site Quarto de diagnostic, et rien d'autre
+│   ├── index.qmd / _quarto.yml           ← accueil et configuration du site
+│   ├── pages/                            ← les autres pages (architecture, évaluation, résultats…)
+│   ├── scripts/                          ← build_data*.py (S3 → JSON du site), chiffres_site.py
+│   │                                       (les chiffres publiés), apercus.py (les vignettes)
+│   ├── styles/ icons/ js/                ← thème SCSS, favicon, comparateur de grilles
+│   └── pyproject.toml / uv.lock          ← cf. website/README.md
 │
 ├── kubernetes/                           ← déploiement SSP Cloud (namespace projet-extraction-tableaux)
 │   ├── deployment-*.yaml                 ← api-centrale, api-marker, marker-proxy
@@ -70,8 +93,9 @@ extraction-comptes-sociaux-llm/
 │   └── image-build.yml                   ← CI : build & push des images Docker (api_centrale,
 │                                            api_marker, marker_proxy, api_opendataloader)
 │
-├── legacy/                               ← anciens scripts/PoC (marker_single CLI, vllm batch…),
-│                                            conservés pour référence, hors pipeline actuel
+├── legacy/                               ← anciens scripts/PoC (marker_single CLI, vllm batch…) et
+│                                            analyses closes (geometrie_marker.py), conservés pour
+│                                            référence, hors pipeline actuel
 │
 ├── .env                                  ← configuration locale (cf. section Configuration)
 └── README.md
@@ -87,7 +111,7 @@ api_centrale ──(PDF page bilan → S3)──>  scripts/extraction_pdf_via_ap
                                           (OCR Surya, GPU)                 (+ Langfuse)
                                                   │  JSON structuré → S3
                                                   ▼
-                                          scripts/json_to_csv.py ──> scripts/evaluation_extraction.py
+                                          scripts/json_to_csv.py ──> scripts/evaluation.py
 ```
 
 `api_marker` et `marker_proxy` fonctionnent en tandem : `api_marker` fait tourner l'OCR neuronal (Surya) en local sur GPU et appelle `marker_proxy` pour la correction LLM des tableaux ; le proxy relaie vers le LLM distant en ajoutant le tracing Langfuse. `api_opendataloader` et `api_chandra` sont des moteurs d'extraction alternatifs, comparés à marker via le pipeline d'évaluation.
@@ -105,6 +129,39 @@ api_centrale ──(PDF page bilan → S3)──>  scripts/extraction_pdf_via_ap
 ---
 
 ## Configuration
+
+Elle se lit à deux endroits, et la distinction est nette :
+
+- **`config/*.yaml` — ce que le pipeline traite.** Un fichier par corpus d'origine, versionné :
+  chemins S3, moteurs comparés, paramètres transmis aux APIs, seuils de la mesure, réglages
+  du site. Les scripts n'en portent aucun en dur, ils lisent d'ici (`scripts/config.py`).
+- **`.env` — ce dont il a besoin pour tourner.** Secrets et URLs, non versionnés.
+
+### `config/*.yaml` — les corpus
+
+| Fichier | Corpus | Entrée | Référence |
+|---|---|---|---|
+| `config/comptes-sociaux.yaml` | comptes sociaux | PDF scannés | XLSX |
+| `config/historiques.yaml` | tableaux historiques | images TIFF/PNG | HTML |
+
+Les chemins y sont **relatifs au bucket**, que le chargeur préfixe. Chaque fichier décrit,
+dans l'ordre du pipeline : `sources` (les entrées), `moteurs` (un bloc par moteur ou
+condition d'expérience : préfixes S3, extension, extracteur, paramètres d'API), `evaluation`
+(sortie et seuils) et `site` (ce que le site publie du corpus).
+
+Ajouter un moteur ou une condition d'expérience, c'est **ajouter un bloc dans `moteurs`** —
+`json_to_csv.py` et `evaluation.py` le prennent en compte sans modification. Ajouter un
+corpus, c'est ajouter un fichier ; si son appariement diffère de ceux qui existent, il
+demande en plus une entrée dans `evaluation.TRAITEMENTS`.
+
+```bash
+uv run --project scripts python scripts/json_to_csv.py --list   # les méthodes configurées
+```
+
+Pour rejouer une chaîne sur d'autres préfixes sans toucher au dépôt, pointer
+`EXTRACTION_CONFIG_DIR` sur un autre dossier de configuration.
+
+### `.env` — accès et secrets
 
 Copier `.env.example` en `.env` à la racine (ou exporter les variables dans le shell) :
 
@@ -239,16 +296,13 @@ config = {
     #    False → OCR seul, pas d'amélioration des tableaux par LLM
     #    True  → correction des tableaux par LLM (recommandé)
     "use_llm": True,
-
     # 2. Nom du modèle LLM — doit correspondre à un modèle disponible
     #    Vérifier avec : curl http://localhost:1324/v1/models
     "openai_model": "gemma4-26b-moe",
-
     # 3. Batch size OCR — sélectionné AUTOMATIQUEMENT selon le device détecté
     #    (cf. bloc `if use_gpu` dans le même fichier) :
     #    CPU : 64   |   GPU A2 16 Go (vrais scans) : 32   |   GPU 24 Go (A10/L4) : plus haut
     "recognition_batch_size": 32,
-
     # 4. force_ocr — laissé à False : marker décide page par page (les pages scannées
     #    ou à mauvaise couche texte sont OCR-isées, les pages nées-numériques sont lues
     #    nativement, ~100× plus vite). Passer à True pour tout forcer dans le réseau.

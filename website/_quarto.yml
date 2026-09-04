@@ -1,0 +1,75 @@
+project:
+  type: website
+  output-dir: _site
+  # Les JSON de comparaison sont produits par scripts/build_data*.py et ne sont pas
+  # versionnés : ils doivent être copiés tels quels dans le site rendu. Le comparateur les
+  # lit à la volée, et il est partagé par les deux pages « Comparaison ».
+  resources:
+    - data/comparaisons.json
+    - data/comparaisons-historiques.json
+    # Aperçus des documents sources, rapatriés de S3 par scripts/build_data*.py. Le
+    # comparateur ne les charge qu'à l'ouverture du volet : ils pèsent une trentaine de
+    # mégaoctets.
+    - data/apercus
+    - js/comparateur.js
+
+website:
+  title: "Extraction des comptes sociaux"
+  description: >
+    Extraire les tableaux de filiales et participations de comptes sociaux scannés :
+    architecture des moteurs, mise en forme, évaluation, et où se perdent les valeurs.
+  favicon: icons/favicon.svg
+  navbar:
+    logo: icons/favicon.svg
+    left:
+      - href: index.qmd
+        text: Introduction
+      - href: pages/architecture.qmd
+        text: Architecture
+      - href: pages/conversion.qmd
+        text: JSON → CSV
+      - href: pages/mise-en-forme.qmd
+        text: Mise en forme
+      - href: pages/evaluation.qmd
+        text: Évaluation
+      # Deux corpus, mêmes pages : le menu évite de doubler la barre de navigation.
+      - text: Résultats
+        menu:
+          - href: pages/resultats.qmd
+            text: Comptes sociaux
+          - href: pages/resultats-historiques.qmd
+            text: Tableaux historiques
+      - href: pages/ameliorations.qmd
+        text: Améliorations
+      - text: Comparaison
+        menu:
+          - href: pages/comparaison.qmd
+            text: Comptes sociaux
+          - href: pages/comparaison-historiques.qmd
+            text: Tableaux historiques
+    right:
+      - icon: github
+        href: https://github.com/InseeFrLab/extraction-comptes-sociaux-llm
+        aria-label: Dépôt GitHub
+  page-footer:
+    center: >
+      Corpus `reprise/` — 48 PDF, 77 tableaux annotés, comptes sociaux déposés publiés en
+      open data par l'INPI. Corpus `tableaux_historiques/` — 40 scans, 40 tableaux annotés,
+      tableaux statistiques historiques.
+  search: false
+
+format:
+  html:
+    theme:
+      light: [cosmo, styles/styles.scss]
+      dark: [cosmo, styles/styles.scss, styles/styles-dark.scss]
+    toc: true
+    toc-title: Sur cette page
+    toc-depth: 3
+    number-sections: false
+    anchor-sections: true
+    fig-responsive: true
+    lang: fr
+    # Les pages sont rédigées à la main : aucun moteur d'exécution à charger.
+    execute:
+      enabled: false

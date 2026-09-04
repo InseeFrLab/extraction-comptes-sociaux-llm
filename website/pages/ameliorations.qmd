@@ -1,0 +1,385 @@
+---
+title: "Améliorations"
+subtitle: "Un levier livré, quatre rejoués sur le corpus courant"
+---
+
+Le classement suit l'impact mesuré, pas la difficulté. **Chaque gain de cette page a été
+obtenu en rejouant l'évaluation sur le corpus courant avec le levier isolé** — 72 paires
+marker, 76 paires chandra, tout le reste étant le code du dépôt.
+
+**Aucun levier ne porte sur l'OCR** : les erreurs de lecture de chiffres pèsent 1,0 % des
+cellules chez marker et 0,9 % chez chandra, concentrées sur une dizaine de fichiers mal
+numérisés ([détail](resultats.qmd#erreurs-de-transcription)). Améliorer le moteur de
+reconnaissance est la piste la moins rentable du lot.
+
+::: {.callout-important appearance="simple"}
+## Ce que le rejeu a changé
+
+- **Le levier de la normalisation numérique était sous-estimé, et il est livré.** Annoncé
+  « +0,7 pt, gratuit », il rend +1,5 pt chez marker, +2,0 chez chandra et surtout **cinq
+  tableaux parfaits de plus** chez chandra. C'est le seul levier fait ; tout le reste de
+  cette page se mesure désormais à partir de son résultat.
+- **La similarité par jetons ne vaut qu'avec l'alignement monotone.** Avec un appariement
+  optimal (Hongrois), elle *dégrade* chandra. Les deux changements sont solidaires : c'est un
+  seul levier, pas deux.
+- **Le volet « seuil en contrainte » est mort** : rejoué, il donne un résultat identique aux
+  quatre métriques, sur les deux moteurs.
+- **Les deux remèdes de la hauteur d'en-tête dégradent** la mesure, au lieu de ne rien
+  rapporter. Ce levier est un diagnostic, définitivement pas un correctif.
+:::
+
+## Ce qui est mesuré, et à partir de quoi
+
+::: {.callout-note appearance="simple"}
+## Lecture des chiffres de cette page
+
+- **`col_recovery` / `row_recovery`** : moyennes par fichier, comme le dépôt les publie.
+- **Récupération par cellule** : cellules numériques retrouvées / attendues, **sommées sur
+  toutes les paires** et **hors cellules vides de l'annotation**. C'est la mesure qui décrit
+  le travail restant — la moyenne par fichier surpondère les petits tableaux, et les cellules
+  vides gonflent le dénominateur d'un tiers ([pourquoi](resultats.qmd#cellules-vides)).
+- **Tableaux parfaits** : `total_extraction` à 1, c'est-à-dire toutes les colonnes, toutes
+  les lignes et toutes les valeurs retrouvées. C'est le compteur le plus exigeant : une seule
+  cellule ratée met un tableau à zéro.
+- Tous les écarts se comptent sur la référence ci-dessous, c'est-à-dire **sur le code livré**,
+  levier 02 compris.
+:::
+
+::: {.dx-scroll}
+
+| Référence — le code livré | `col_recovery` | `row_recovery` | récup. par cellule | tableaux parfaits |
+|---|---:|---:|---:|---:|
+| **marker**, 72 paires | 0,877 | 0,861 | **55,7 %** | 28 / 72 |
+| **chandra**, 76 paires | 0,980 | 0,958 | **82,0 %** | 41 / 76 |
+
+:::
+
+## Les cinq leviers
+
+:::: {.dx-finding}
+[01]{.dx-rank} [+9,8 pts marker · +2,0 pts chandra]{.dx-impact}
+
+### Apparier les libellés par jetons, et dans l'ordre
+
+L'appariement compare les libellés d'en-tête par distance de Levenshtein, puis applique le
+seuil de 0,5 *après* un matching stable. Trois faiblesses étaient soupçonnées ; le rejeu en
+retient une, en confirme une autre autrement que prévu, et en écarte la troisième.
+
+- ~~**Casse, accents et ponctuation comptent.**~~ **Fait.** `_normalize_label` ramène casse,
+  accents, espaces et variantes de tiret à une graphie canonique avant la comparaison
+  ([détail](evaluation.qmd#normalisation)). Déjà dans le code, donc déjà dans la référence.
+- **Un mot ajouté fait chuter la similarité.** `'Capital'` contre `'Capital | Nette'` donne
+  0,47, juste sous le seuil, alors que tous les jetons du premier sont dans le second. Une
+  **similarité par inclusion de jetons** — `|A ∩ B| / min(|A|, |B|)`, dont on retient le
+  maximum avec Levenshtein — corrige ce cas. **C'est le gain du levier.**
+- ~~**Le seuil appliqué après le matching jette des paires valides.**~~ **Rejoué : sans
+  effet.** En faisant du seuil une contrainte plutôt qu'un filtre postérieur, le résultat est
+  **identique sur les deux moteurs**, aux quatre métriques. Ce volet est à abandonner.
+
+::: {.callout-important appearance="simple"}
+## Les jetons ne valent qu'avec l'alignement monotone
+
+Combinée à un appariement **optimal** (Hongrois), la similarité par jetons **dégrade
+chandra** : la récupération tombe de 82,0 à 79,8 % et trois tableaux parfaits sont perdus. La
+raison est visible dans le corpus : `'Capital'` et `'Nette'` obtiennent tous deux une
+inclusion de 1,0 face à `'Capital | Nette'`, et rien n'empêche l'optimum global de choisir la
+mauvaise.
+
+Combinée à un **alignement monotone** — qui respecte l'ordre des lignes et des colonnes —
+elle gagne sur les deux moteurs. L'ordre est l'information qui manquait : deux colonnes
+voisines ne peuvent plus être appariées à l'envers.
+
+**Les deux changements sont donc solidaires.** Ce n'est pas « similarité par jetons » puis
+« meilleur appariement » : c'est un seul levier, et le livrer à moitié ferait reculer chandra.
+:::
+
+::: {.dx-scroll}
+
+| Variante | `col_recovery` | `row_recovery` | récup. par cellule | tableaux parfaits |
+|---|---:|---:|---:|---:|
+| **marker** — référence (Levenshtein, appariement stable) | 0,877 | 0,861 | 55,7 % | 28 |
+| appariement optimal (Hongrois) | 0,877 | 0,861 | 56,4 % | 28 |
+| alignement monotone, Levenshtein seul | 0,870 | 0,855 | 56,3 % | 28 |
+| jetons + Hongrois | **0,925** | **0,896** | 61,6 % | 29 |
+| **jetons + alignement monotone** | 0,922 | 0,889 | **65,5 %** | **32** |
+| **chandra** — référence | 0,980 | 0,958 | 82,0 % | **41** |
+| appariement optimal (Hongrois) | 0,980 | 0,958 | 82,0 % | **41** |
+| alignement monotone, Levenshtein seul | 0,976 | 0,953 | 83,0 % | 39 |
+| jetons + Hongrois | **0,987** | **0,960** | 79,8 % | 38 |
+| **jetons + alignement monotone** | 0,983 | 0,955 | **84,0 %** | 40 |
+
+: Gras = meilleur de la colonne pour le moteur. Le Hongrois gagne sur la structure et perd sur les valeurs : il apparie plus de colonnes, mais pas toujours les bonnes.
+
+:::
+
+L'alignement monotone a un second avantage, propre à ce corpus : il rend **impossible
+l'appariement croisé de deux filiales d'un même groupe aux noms voisins** — erreur observée à
+plusieurs reprises, que ni le seuil ni l'appariement stable n'empêchent.
+
+::: {.dx-evidence}
+**Le prix à payer, honnêtement.** Sur chandra, la contrainte d'ordre coûte 0,3 pt de
+`row_recovery` et **un tableau parfait** (41 → 40) : elle refuse quelques appariements que le
+matching stable acceptait. La récupération par cellule progresse pourtant de 2,0 pts — le
+refus porte donc majoritairement sur des lignes appariées à tort. Le tableau perdu est à
+regarder avant de livrer.
+:::
+::::
+
+:::: {.dx-finding}
+[02]{.dx-rank} [Fait · +1,5 pt marker · +2,0 pts chandra · +5 tableaux parfaits]{.dx-impact}
+
+### ~~Compléter la normalisation numérique~~ — livré
+
+`_normalize_numeric_str` gérait les espaces séparateurs de milliers et les pourcentages, mais
+laissait passer trois familles d'écarts purement typographiques, à chiffres identiques de part
+et d'autre. Elles sont désormais absorbées, et **la comparaison de cellule n'a plus qu'un seul
+chemin** : les cellules à unité, à parenthèses ou à placeholder partaient auparavant en
+comparaison de chaîne brute, ce qui séparait aussi `100%` de `100,00%`.
+
+| Famille traitée | marker | chandra | Attendu | Prédit |
+|---|---:|---:|---|---|
+| Décimale virgule contre point | 34 | 33 | `2.08` | `2,08` |
+| Signe négatif détaché | 3 | 4 | `- 30 000` | `-30 000` |
+| Parenthèses comptables | 1 | 0 | `(1 976)` | `-1 976` |
+
+::: {.dx-scroll}
+
+| | `numeric_recovery` | récup. par cellule | tableaux parfaits |
+|---|---:|---:|---:|
+| **marker** — avant | 0,725 | 54,2 % | 27 |
+| **marker** — après | **0,734** | **55,7 %** | **28** |
+| **chandra** — avant | 0,897 | 80,0 % | 36 |
+| **chandra** — après | **0,910** | **82,0 %** | **41** |
+
+: `col_recovery` et `row_recovery` sont inchangés : le correctif ne touche que la comparaison des valeurs, pas l'appariement.
+
+:::
+
+::: {.dx-evidence}
+**Ce levier avait été sous-estimé.** Il était classé quatrième, annoncé « +0,7 pt, gratuit ».
+Il rend **cinq tableaux parfaits de plus chez chandra** — de 36 à 41, la plus forte
+progression de ce compteur parmi tous les leviers, celui du levier 01 compris. Peu de
+cellules, mais des cellules qui décident d'un `total_extraction`.
+:::
+
+::: {.callout-warning appearance="simple"}
+## Deux écarts d'écriture n'ont volontairement pas été absorbés
+
+- **Le point séparateur de milliers.** `6 901` contre `6.901` reste compté faux : `6.901` est
+  ambigu — six mille neuf cent un à la française, ou 6,901 à l'anglo-saxonne. Trancher
+  demanderait une heuristique que le corpus ne justifie pas encore.
+- **Les unités en suffixe.** Les retirer ferait gagner 1,0 pt de plus chez chandra, mais
+  rendrait `4 139 €` égal à `4 139 USD` : une confusion de devise serait créditée comme une
+  extraction juste. Le point gagné ne vaut pas ce risque.
+
+Reste aussi à unifier : `website/scripts/build_data.py` porte encore sa propre normalisation
+(`_norm_num`), qui *retire* les unités. Le site et l'évaluation divergent donc d'une
+quarantaine de cellules chez chandra. `build_data.py` devrait déléguer à l'évaluation, comme
+il le fait déjà pour toutes les autres fonctions.
+:::
+::::
+
+:::: {.dx-finding}
+[03]{.dx-rank} [≈ 7 % des valeurs marker · nul chez chandra]{.dx-impact}
+
+### Réapparier les tableaux autrement que par leur rang
+
+`_list_pairs` apparie `{siren}_1.xlsx` à `{siren}_1.csv`. Dès que le moteur découpe ou
+fusionne un tableau, les rangs se désynchronisent et toute la suite du SIREN est comparée de
+travers. Sur `TAB_300221017_1`, l'annotation compte 39 lignes et le CSV comparé en a 3.
+
+Le nombre de tableaux détectés diffère de la référence sur **7 SIREN sur 48 (marker)** et 4
+sur 48 (chandra). Deux chantiers distincts :
+
+- **Côté pipeline — la détection de frontière de tableau.** Les tableaux coupés par un saut
+  de page ne sont pas recollés : la mesure suit la granularité de l'annotation, un tableau
+  par page. Les blocs qu'une même page chandra sépare, eux, le sont désormais d'après son
+  balisage ([étape 4](conversion.qmd)), ce qui a réglé `468_316701416_TAB` et `411373525`.
+  Quand marker rend malgré tout un tableau d'un seul tenant, sa **référence** est regroupée
+  d'autant ([méthode](evaluation.qmd#paires)), ce qui a ramené ses annotations orphelines de
+  5 à 1. Reste ouvert : `TAB_676250111_atypique`, coupé en largeur, qu'aucun regroupement par
+  lignes ne traite.
+- **Côté évaluation — l'appariement lui-même**, qui devrait se faire par similarité de
+  contenu (chevauchement des libellés de lignes) plutôt que par rang. Sinon le score mesure
+  la chance d'un alignement d'index.
+
+Le second est bien moins coûteux et **débloque la mesure du premier** : sans appariement
+fiable, impossible de savoir si une correction de la segmentation améliore quoi que ce soit.
+
+::: {.dx-evidence}
+**Pourquoi ce levier n'est pas rejoué.** Il change *quelles paires existent*, donc le
+dénominateur lui-même : un gain chiffré ne serait pas comparable aux autres lignes de cette
+page. La preuve reste indirecte, et elle est nette : **7,2 % des valeurs marker sont absentes
+du CSV comparé mais présentes dans un autre CSV du même SIREN** — 92,8 % des valeurs sont
+retrouvées quelque part dans l'extraction du SIREN, contre 85,7 % dans le seul CSV apparié
+([entonnoir](resultats.qmd#entonnoir-dattrition)). Chez chandra l'écart est désormais **nul**
+(97,3 % dans les deux cas) : le levier ne vaut plus que pour marker.
+:::
+::::
+
+:::: {.dx-finding}
+[04]{.dx-rank} [+6,3 pts marker · +8,8 pts chandra — indicateur, pas correctif]{.dx-impact}
+
+### Tolérance d'une colonne : à publier, pas à activer
+
+Une fois ligne et colonne appariées, la valeur attendue se trouve souvent une colonne plus
+loin. Avec une tolérance de ±1 colonne, la récupération par cellule passe de 55,7 à
+**62,0 %** (marker) et de 82,0 à **90,8 %** (chandra).
+
+Ce sont les plus gros chiffres de la page, et **c'est précisément pourquoi ce levier est
+classé quatrième** : la tolérance masque le décalage sans le corriger. Un score qui monte de
+neuf points parce qu'on regarde la case d'à côté ne décrit pas une meilleure extraction.
+
+- **Bug à corriger d'abord :** `--cell-delta 1` existe mais ne s'applique qu'à
+  `total_extraction`, pas à `numeric_recovery`, contrairement à ce qu'annonce son aide
+  ([détail](evaluation.qmd#metriques)). Les chiffres ci-dessus supposent le bug corrigé.
+- **À publier en deux colonnes**, tolérance nulle et ±1, jamais en réglage par défaut.
+- **Bon indicateur de suivi :** l'écart entre les deux colonnes doit se réduire à mesure que
+  les fusions et les en-têtes s'alignent. Il vaut 8,8 pts chez chandra et 6,3 chez marker :
+  c'est la mesure du décalage local restant, et il est plus grand chez le meilleur moteur.
+
+::: {.dx-evidence}
+**Preuve.** 209 cellules marker et 497 cellules chandra sont en « bonne ligne, colonne
+décalée » — 3,8 % et 9,0 % des cellules attendues
+([décomposition](resultats.qmd#decomposition-cellules)). La tolérance en rattrape davantage
+que ce seul poste : elle récupère aussi des cellules classées ailleurs.
+:::
+::::
+
+:::: {.dx-finding}
+[05]{.dx-rank} [−3,2 pts marker · −4,5 pts chandra — diagnostic seulement]{.dx-impact}
+
+### Hauteur d'en-tête : le meilleur prédicteur, sans remède
+
+`detect_column_header_height` décide seule du début de la zone de données et du texte
+d'en-tête concaténé, et **une erreur de ±1 sépare un bon fichier d'un mauvais** : la
+récupération vaut 65,1 % quand la hauteur concorde entre annotation et prédiction, 48,4 %
+sinon (marker) ; 92,6 % contre 69,8 % (chandra)
+([détail](resultats.qmd#hauteur-entete)).
+
+Les deux remèdes qui semblaient s'imposer ont été rejoués sur les seuls fichiers
+discordants — 31 chez marker, 18 chez chandra. **Les deux dégradent.**
+
+::: {.dx-scroll}
+
+| Variante, fichiers à en-tête discordant | `col_recovery` | récup. par cellule | tableaux parfaits |
+|---|---:|---:|---:|
+| **marker**, 31 paires — référence | 0,781 | 48,4 % | 4 |
+| forcer la hauteur de l'annotation | 0,691 | 45,2 % | 1 |
+| décaler la grille prédite d'autant | 0,504 | 26,0 % | 1 |
+| **chandra**, 18 paires — référence | 0,950 | 68,4 % | 1 |
+| forcer la hauteur de l'annotation | 0,852 | 63,9 % | 1 |
+| décaler la grille prédite d'autant | 0,506 | 23,8 % | 0 |
+
+: Mesures faites avec la comparaison de cellule du dépôt. La page Résultats publie 69,8 %
+pour la référence chandra, calculée avec la normalisation de `build_data.py`, qui retire les
+unités : l'écart de 1,4 pt est exactement la divergence signalée au levier 02.
+
+:::
+
+::: {.dx-evidence}
+**Pourquoi les remèdes échouent.** Forcer la hauteur détruit le texte d'en-tête concaténé —
+`col_recovery` perd 9 à 10 points — donc l'appariement des colonnes, donc tout le reste.
+Décaler la grille est pire encore : sur ces fichiers, le moteur n'a pas *décalé* le tableau,
+il en a produit une autre structure. **49 des 52 fichiers discordants ont une source
+parfaitement régulière** — ni ligne courte, ni sous-ligne à replacer : l'écart est en amont
+de la conversion, dans la structuration OCR/LLM
+([détail](resultats.qmd#source-irreguliere)).
+:::
+
+Ce qui reste utile, et peu coûteux :
+
+- lui donner un **jeu de tests dédié** sur les tableaux de filiales et participations, pour
+  que la détection ne régresse pas ;
+- **publier la concordance de hauteur** à côté des métriques : c'est le meilleur indicateur
+  d'avance ou de recul disponible, même s'il ne se corrige pas côté mesure.
+::::
+
+## Où en serait le pipeline, leviers appliqués {#cumul}
+
+Le levier 02 est dans la référence. Reste le levier 01, seul correctif chiffrable qui n'est
+pas encore livré :
+
+::: {.dx-scroll}
+
+| Configuration | `col_recovery` | `row_recovery` | récup. par cellule | tableaux parfaits |
+|---|---:|---:|---:|---:|
+| **marker** — avant le levier 02 | 0,877 | 0,861 | 54,2 % | 27 / 72 |
+| **marker** — référence, levier 02 livré | 0,877 | 0,861 | 55,7 % | 28 / 72 |
+| **marker** — avec le levier 01 | **0,922** | **0,889** | **65,5 %** | **32 / 72** |
+| *idem, avec tolérance ±1 (diagnostic)* | *0,922* | *0,889* | *72,5 %* | *33 / 72* |
+| **chandra** — avant le levier 02 | 0,980 | 0,958 | 80,0 % | 36 / 76 |
+| **chandra** — référence, levier 02 livré | 0,980 | 0,958 | 82,0 % | **41 / 76** |
+| **chandra** — avec le levier 01 | **0,983** | 0,955 | **84,0 %** | 40 / 76 |
+| *idem, avec tolérance ±1 (diagnostic)* | *0,983* | *0,955* | *92,5 %* | *41 / 76* |
+
+:::
+
+Trois lectures :
+
+- **Les deux leviers pris ensemble portent marker de 54,2 à 65,5 %** de récupération par
+  cellule, et de 27 à 32 tableaux parfaits. C'est le gain le plus net que la mesure sache
+  produire sans toucher aux moteurs.
+- **Le gain est très inégal entre moteurs.** marker gagne 11 points, chandra 4. C'est logique :
+  les leviers corrigent l'appariement et l'écriture des nombres, or c'est chez marker que
+  l'appariement décroche.
+- **Sur chandra, le levier 01 coûte un tableau parfait** (41 → 40) alors qu'il gagne 2 points
+  de récupération. Le compteur le plus exigeant et la mesure de fond ne pointent pas dans le
+  même sens : à trancher fichier en main, pas à l'aveugle.
+
+## Corrections de mesure, à faire en parallèle
+
+Ces points ne changent pas la qualité de l'extraction — ils changent ce que les chiffres
+veulent dire. À traiter **avant** de publier une nouvelle campagne, faute de quoi les gains
+des leviers seront illisibles.
+
+- **Sortir les cellules vides du dénominateur.** 34,2 % des cellules comptées dans
+  `numeric_recovery` sont des cellules vides de l'annotation — 2 867 sur 8 385 chez marker,
+  2 868 sur 8 411 chez chandra — et **les deux tiers sont créditées** comme récupérées parce
+  que la prédiction est vide au même endroit. Les compter à part, et publier la version
+  pondérée par cellule à côté de la moyenne par fichier, qui surpondère les petits tableaux
+  ([effet mesuré](resultats.qmd#effet-taille)).
+- **Faire déléguer `build_data.py` à l'évaluation.** Le site porte encore sa propre
+  normalisation numérique, qui retire les unités là où l'évaluation ne le fait pas : une
+  quarantaine de cellules chandra sont classées différemment de part et d'autre. Une seule
+  définition, dans `evaluation.py`.
+- **Rendre visible l'absence d'une méthode déclarée.** `opendataloader` figure dans `METHODS`
+  mais ne produit aucun CSV : il disparaît du parquet sans avertissement. Soit il sort du
+  périmètre, soit l'évaluation lève un avertissement explicite. Sur ses 48 sorties HTML, 12
+  seulement contiennent une balise `<table>`.
+- **Vérifier l'appariement de `marker_last_work` avant de conclure à une régression.** C'est
+  la configuration la plus récente et la moins bonne (`total_extraction` à 0,042), mais elle
+  passe par `_list_pairs_from_correspondances` et ses noms de fichiers sont des SIREN nus face
+  à des annotations préfixées. Le score peut être faux sans que l'extraction le soit
+  ([détail](resultats.qmd#marker-last-work)).
+
+## Ordre de travail
+
+1. ~~**Levier 02** — porter la normalisation complète.~~ **Fait.**
+2. **Corrections de mesure** ci-dessus — sinon rien de ce qui suit n'est mesurable. La plus
+   urgente est l'unification de `build_data.py` : le site et l'évaluation ne doivent pas
+   compter deux choses différentes.
+3. **Levier 01** — similarité par jetons **et** alignement monotone, ensemble : le seul gain à
+   deux chiffres du lot (+9,8 pts chez marker). Vérifier au passage le tableau chandra que le
+   levier fait perdre. Le volet « seuil en contrainte » est à abandonner.
+4. **Levier 03, volet évaluation** — appariement par contenu. Débloque la mesure des fichiers
+   découpés, et c'est le seul levier restant qui puisse encore rendre 7 points chez marker.
+5. **Leviers 04 et 05 : publier, ne pas corriger.** La tolérance ±1 en seconde colonne, la
+   concordance de hauteur d'en-tête à côté des métriques. Aucun des deux n'est un correctif.
+
+Le levier 03, volet pipeline, reste le plus lourd. Son cas le plus fréquent — le tableau
+coupé par un saut de page — est traité des deux côtés. Ce qui reste, deux tableaux voisins
+fusionnés en un, demande de reprendre la segmentation en amont : prioritaire une fois les
+étapes ci-dessus faites.
+
+::: {.callout-note appearance="simple"}
+## Reproduire ces chiffres
+
+Le rejeu applique une variante isolée de `evaluate_pair` aux paires de `_list_pairs`
+(regroupement des coupures de page compris), sans jamais réécrire de CSV. Les définitions
+exactes : inclusion de jetons sur les libellés canoniques de `_normalize_label`, jetons de
+deux caractères au moins, séparateur d'en-tête ` | ` exclu ; alignement monotone par
+programmation dynamique, seuil de 0,5 en contrainte. La colonne « avant » du levier 02 rejoue
+la normalisation d'alors — espaces et pourcentages seulement, et deux chemins de comparaison
+selon la nature de la valeur.
+:::

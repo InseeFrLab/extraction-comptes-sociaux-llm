@@ -1,0 +1,1172 @@
+/*-- scss:defaults --*/
+
+// Identité « grand livre » : filets fins, chiffres tabulaires, encre bleu-ardoise.
+// Le serif ne sert qu'aux titres ; le corps et les tableaux restent en sans-serif
+// système, seule police fiable sans CDN de webfont.
+
+$font-family-sans-serif: system-ui, -apple-system, "Segoe UI", sans-serif !default;
+$font-family-monospace: ui-monospace, "SF Mono", "DejaVu Sans Mono", Menlo, Consolas,
+  monospace !default;
+
+$body-bg: #f4f5f6 !default;
+$body-color: #141a21 !default;
+$primary: #1e4e7a !default;
+$link-color: #1e4e7a !default;
+
+$font-size-root: 16px !default;
+$line-height-base: 1.62 !default;
+
+$border-color: #dfe4e9 !default;
+$table-border-color: #dfe4e9 !default;
+
+// Palette du site, exposée en propriétés CSS pour que les composants (grilles de
+// comparaison, tuiles) s'y réfèrent par rôle et non par valeur.
+$surface: #fcfcfd;
+$surface-2: #eff1f3;
+$ink-2: #525e6b;
+$muted: #8593a0;
+$rule: #c7cfd7;
+
+/*-- scss:rules --*/
+
+:root {
+  --dx-plane: #{$body-bg};
+  --dx-surface: #{$surface};
+  --dx-surface-2: #{$surface-2};
+  --dx-ink: #{$body-color};
+  --dx-ink-2: #{$ink-2};
+  --dx-muted: #{$muted};
+  --dx-hairline: #{$border-color};
+  --dx-rule: #{$rule};
+  --dx-accent: #{$primary};
+  --dx-accent-soft: #e7eef5;
+
+  // Rampe ordinale bleue, validée : ΔL ≥ 0,06 entre pas successifs, le pas le plus
+  // clair à 2,06:1 sur la surface claire.
+  --dx-ord-1: #104281;
+  --dx-ord-2: #256abf;
+  --dx-ord-3: #3987e5;
+  --dx-ord-4: #86b6ef;
+
+  // Séries catégorielles, un slot par moteur (ΔE vision normale 33,6 ; CVD 24,7 entre les
+  // deux). Le comparateur les résout par nom, `var(--dx-{moteur})` : une série de plus au
+  // jeu de données demande une teinte de plus ici et dans `styles-dark.scss`.
+  --dx-marker: #2a78d6;
+  --dx-chandra: #eb6834;
+
+  // Teintes de fond des statuts de cellule. L'encre reste l'encre du corps : la
+  // teinte porte l'état, la légende et l'infobulle le nomment.
+  --dx-st-ok-bg: #e3f3e3;
+  --dx-st-ok-ink: #0a5c0a;
+  --dx-st-format-bg: #fdf0d5;
+  --dx-st-format-ink: #7a5200;
+  --dx-st-ocr-bg: #fce4d6;
+  --dx-st-ocr-ink: #8a3c12;
+  --dx-st-deplacee-bg: #dfeafa;
+  --dx-st-deplacee-ink: #14477e;
+  --dx-st-manquante-bg: #fadfdf;
+  --dx-st-manquante-ink: #8f2222;
+  --dx-st-differente-bg: #f4dcea;
+  --dx-st-differente-ink: #7d1f52;
+  --dx-st-nonapp-bg: #e7e9ec;
+  --dx-st-nonapp-ink: #5a6570;
+}
+
+body {
+  background: var(--dx-plane);
+}
+
+h1,
+h2,
+h3,
+h4,
+.dx-serif {
+  font-family: "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", "P052",
+    Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+h1 {
+  line-height: 1.08;
+}
+
+// ── Filets et tableaux ──────────────────────────────────────────────────────
+
+.dx-scroll {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+
+table {
+  background: var(--dx-surface);
+  font-size: 0.87rem;
+}
+
+thead th {
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dx-muted);
+  font-weight: 650;
+  border-bottom: 1.5px solid var(--dx-rule) !important;
+  white-space: nowrap;
+}
+
+// Les colonnes de chiffres s'alignent : chasse fixe obligatoire.
+td:not(:first-child),
+th:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}
+
+// ── Tuiles de chiffres-clés ─────────────────────────────────────────────────
+
+.dx-tiles {
+  display: grid;
+  gap: 2px;
+  margin: 1.8rem 0;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  background: var(--dx-hairline);
+  border: 1px solid var(--dx-hairline);
+}
+
+.dx-tile {
+  background: var(--dx-surface);
+  padding: 1.25rem 1.2rem;
+}
+
+.dx-tile-val {
+  font-family: "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", "P052",
+    Georgia, serif;
+  font-size: 2.3rem;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  display: block;
+  margin-bottom: 0.45rem;
+}
+
+.dx-tile-lab {
+  font-size: 0.82rem;
+  color: var(--dx-ink-2);
+  line-height: 1.45;
+}
+
+// ── Barres (entonnoir, comparaisons appairées) ──────────────────────────────
+
+// Quarto ajoute sa classe `figure` aux éléments <figure>, que Bootstrap met en
+// display:inline-block — la figure se réduirait alors à la largeur de son contenu et les
+// barres, dimensionnées en pourcentage, s'effondreraient. D'où le display explicite.
+.dx-fig {
+  display: block;
+  width: 100%;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  padding: 1.4rem 1.4rem 1.1rem;
+  margin: 2rem 0;
+}
+
+.dx-fig-title {
+  font-size: 0.97rem;
+  font-weight: 650;
+  margin: 0 0 0.2rem;
+}
+
+.dx-fig-sub {
+  font-size: 0.81rem;
+  color: var(--dx-muted);
+  margin: 0 0 1.3rem;
+}
+
+.dx-fig-note {
+  font-size: 0.81rem;
+  color: var(--dx-ink-2);
+  margin: 1.2rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--dx-hairline);
+}
+
+.dx-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+  font-size: 0.78rem;
+  color: var(--dx-ink-2);
+  margin-bottom: 1.1rem;
+
+  > span {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+}
+
+.dx-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex: none;
+  border: 1px solid rgba(20, 26, 33, 0.12);
+}
+
+.dx-facet + .dx-facet {
+  margin-top: 1.7rem;
+}
+
+.dx-facet-name {
+  font-size: 0.77rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dx-ink-2);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.dx-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dx-bar-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 14rem) 1fr;
+  gap: 0.9rem;
+  align-items: center;
+}
+
+.dx-bar-lab {
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  line-height: 1.3;
+}
+
+.dx-bar-track {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.dx-bar {
+  height: 21px;
+  border-radius: 0 4px 4px 0;
+  flex: none;
+}
+
+.dx-bar-val {
+  font-family: #{$font-family-monospace};
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+  white-space: nowrap;
+
+  .dx-n {
+    color: var(--dx-muted);
+  }
+}
+
+.dx-bar-loss {
+  font-family: #{$font-family-monospace};
+  font-size: 0.75rem;
+  color: #b02a2a;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .dx-bar-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+}
+
+// ── Constats classés ────────────────────────────────────────────────────────
+
+// Un constat = un bloc numéroté. Le rang encode l'impact mesuré (nombre de cellules
+// récupérables), pas un ordre de lecture : c'est une information, pas un ornement.
+.dx-finding {
+  padding: 1.7rem 0 1.8rem;
+  border-top: 1px solid var(--dx-hairline);
+  padding-left: 1.2rem;
+  border-left: 3px solid var(--dx-hairline);
+
+  &:first-of-type {
+    border-top: 2px solid var(--dx-rule);
+  }
+
+  &:last-of-type {
+    border-bottom: 1px solid var(--dx-hairline);
+  }
+
+  // Pandoc enveloppe les spans dans un paragraphe : c'est lui qui porte la ligne
+  // de tête, d'où le ciblage du premier paragraphe plutôt qu'un conteneur dédié.
+  > p:first-child {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.55rem;
+  }
+}
+
+.dx-rank {
+  font-family: #{$font-family-monospace};
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--dx-muted);
+  letter-spacing: 0.02em;
+}
+
+.dx-impact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  padding: 0.16rem 0.52rem;
+  border-radius: 3px;
+  background: var(--dx-accent-soft);
+  color: var(--dx-accent);
+
+  &::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+}
+
+.dx-finding h3 {
+  margin: 0 0 0.8rem;
+  font-size: 1.08rem;
+  font-weight: 650;
+  font-family: #{$font-family-sans-serif};
+  letter-spacing: 0;
+}
+
+.dx-evidence {
+  margin-top: 0.9rem;
+  padding: 0.8rem 1rem;
+  background: var(--dx-surface);
+  border-left: 2px solid var(--dx-rule);
+  font-size: 0.84rem;
+  color: var(--dx-ink-2);
+
+  strong {
+    color: var(--dx-ink);
+  }
+}
+
+@media (max-width: 620px) {
+  .dx-finding {
+    grid-template-columns: 1fr;
+  }
+
+  .dx-rank {
+    grid-row: auto;
+    border-right: none;
+    text-align: left;
+    padding: 0 0 0.5rem;
+  }
+}
+
+// ── Page de comparaison ─────────────────────────────────────────────────────
+
+.dx-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem 1.4rem;
+  align-items: flex-end;
+  padding: 1.1rem 1.2rem;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  margin: 1.5rem 0;
+}
+
+.dx-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+
+  label {
+    font-size: 0.71rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dx-muted);
+    font-weight: 650;
+  }
+
+  select {
+    font-family: #{$font-family-monospace};
+    font-size: 0.85rem;
+    padding: 0.35rem 0.5rem;
+    background: var(--dx-plane);
+    color: var(--dx-ink);
+    border: 1px solid var(--dx-rule);
+    border-radius: 3px;
+    max-width: 22rem;
+  }
+}
+
+.dx-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.5rem;
+  font-size: 0.83rem;
+  color: var(--dx-ink-2);
+  margin-bottom: 0.4rem;
+
+  b {
+    color: var(--dx-ink);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.dx-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 650;
+  padding: 0.12rem 0.5rem;
+  border-radius: 3px;
+}
+
+.dx-flag-ok {
+  background: var(--dx-st-ok-bg);
+  color: var(--dx-st-ok-ink);
+}
+
+.dx-flag-warn {
+  background: var(--dx-st-manquante-bg);
+  color: var(--dx-st-manquante-ink);
+}
+
+.dx-panes {
+  display: grid;
+  gap: 1.4rem;
+  grid-template-columns: 1fr;
+  margin: 1.2rem 0 0;
+}
+
+@media (min-width: 1000px) {
+  .dx-panes.dx-side-by-side {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+// Le comparateur occupe toute la largeur utile de la page (`.column-screen-inset`
+// sur la page Comparaison) : les grilles y sont les seuls objets à ne pas tenir dans
+// la colonne de lecture. Quarto repeint le fond des tableaux de cette colonne, ce que
+// les grilles doivent conserver.
+.page-columns .column-screen-inset table.dx-grid {
+  background: var(--dx-surface);
+}
+
+.dx-pane {
+  min-width: 0;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  padding: 1rem 1rem 0.6rem;
+}
+
+.dx-pane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.dx-pane-title {
+  font-size: 0.86rem;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.dx-pane-dims {
+  font-family: #{$font-family-monospace};
+  font-size: 0.75rem;
+  color: var(--dx-muted);
+}
+
+.dx-grid-scroll {
+  overflow: auto;
+  max-height: 78vh;
+  border: 1px solid var(--dx-hairline);
+}
+
+table.dx-grid {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  margin: 0;
+  background: var(--dx-surface);
+  width: auto;
+
+  td,
+  th {
+    border: 1px solid var(--dx-hairline);
+    padding: 0.26rem 0.45rem;
+    vertical-align: top;
+    max-width: 18rem;
+    min-width: 2.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;
+  }
+
+  // Gouttière d'index : repère la ligne et la colonne, comme dans un tableur.
+  th.dx-idx {
+    position: sticky;
+    background: var(--dx-surface-2);
+    color: var(--dx-muted);
+    font-family: #{$font-family-monospace};
+    font-size: 0.66rem;
+    font-weight: 500;
+    text-align: center;
+    white-space: nowrap;
+    z-index: 2;
+  }
+
+  thead th.dx-idx {
+    top: 0;
+  }
+
+  tbody th.dx-idx {
+    left: 0;
+    z-index: 1;
+  }
+
+  thead th.dx-corner {
+    left: 0;
+    top: 0;
+    z-index: 3;
+  }
+
+  // Zone d'en-tête détectée : c'est elle qui décide du reste, elle doit se voir.
+  td.dx-hdr {
+    background: var(--dx-surface-2);
+    font-weight: 600;
+    color: var(--dx-ink-2);
+  }
+
+  // Appariement des libellés : un en-tête de ligne ou de colonne est apparié ou non,
+  // et c'est ce booléen qui décide du sort des cellules de données qu'il commande.
+  // La teinte est donc portée par le libellé **et** par son index de gouttière, pour
+  // rester lisible quand la grille défile.
+  td.dx-hm-ok {
+    background: var(--dx-st-ok-bg);
+    color: var(--dx-st-ok-ink);
+  }
+
+  td.dx-hm-no {
+    background: var(--dx-st-manquante-bg);
+    color: var(--dx-st-manquante-ink);
+  }
+
+  th.dx-idx-ok {
+    background: var(--dx-st-ok-bg);
+    color: var(--dx-st-ok-ink);
+    font-weight: 700;
+  }
+
+  th.dx-idx-no {
+    background: var(--dx-st-manquante-bg);
+    color: var(--dx-st-manquante-ink);
+    font-weight: 700;
+  }
+}
+
+td.dx-st-ok {
+  background: var(--dx-st-ok-bg);
+  color: var(--dx-st-ok-ink);
+}
+td.dx-st-format {
+  background: var(--dx-st-format-bg);
+  color: var(--dx-st-format-ink);
+}
+td.dx-st-ocr {
+  background: var(--dx-st-ocr-bg);
+  color: var(--dx-st-ocr-ink);
+}
+td.dx-st-deplacee {
+  background: var(--dx-st-deplacee-bg);
+  color: var(--dx-st-deplacee-ink);
+}
+td.dx-st-manquante {
+  background: var(--dx-st-manquante-bg);
+  color: var(--dx-st-manquante-ink);
+}
+td.dx-st-differente {
+  background: var(--dx-st-differente-bg);
+  color: var(--dx-st-differente-ink);
+}
+td.dx-st-nonappariee {
+  background: var(--dx-st-nonapp-bg);
+  color: var(--dx-st-nonapp-ink);
+}
+
+// Lien visuel entre une cellule de l'annotation et la cellule appariée de la
+// prédiction : c'est ce qui rend le décalage lisible.
+table.dx-grid td.dx-linked {
+  outline: 2px solid var(--dx-accent);
+  outline-offset: -2px;
+}
+
+table.dx-grid td.dx-focus {
+  outline: 2px solid var(--dx-ink);
+  outline-offset: -2px;
+}
+
+table.dx-grid tr.dx-row-hl th.dx-idx,
+table.dx-grid col.dx-col-hl {
+  background: var(--dx-accent-soft);
+}
+
+.dx-cellinfo {
+  font-family: #{$font-family-monospace};
+  font-size: 0.76rem;
+  color: var(--dx-ink-2);
+  min-height: 2.4em;
+  padding: 0.4rem 0.6rem;
+  margin-top: 0.6rem;
+  background: var(--dx-surface-2);
+  border-radius: 3px;
+  line-height: 1.5;
+}
+
+// La légende tient sur deux lignes — une par objet légendé, statut d'une valeur puis
+// appariement d'un libellé. C'est le paragraphe qui porte la mise en ligne : le
+// balisage Quarto place les entrées dans un `<p>` par groupe.
+.dx-status-legend {
+  font-size: 0.77rem;
+  color: var(--dx-ink-2);
+  margin: 1.1rem 0 0;
+
+  p {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 1rem;
+    margin: 0 0 0.4rem;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+
+    > span {
+      display: flex;
+      align-items: center;
+      gap: 0.38rem;
+    }
+  }
+}
+
+.dx-chip {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  flex: none;
+  border: 1px solid rgba(20, 26, 33, 0.14);
+}
+
+// La légende couvre deux objets distincts — le statut d'une valeur et l'appariement
+// d'un libellé : sans intertitre, les deux verts se lisent comme un seul.
+.dx-legend-head {
+  color: var(--dx-ink);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dx-nodata {
+  padding: 1.4rem 1.5rem;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-rule);
+  border-left: 3px solid #b02a2a;
+  font-size: 0.9rem;
+}
+
+.dx-nodata code {
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+// ── Histogramme vertical (distribution des scores) ──────────────────────────
+//
+// Les barres sont dimensionnées en pourcentage de la hauteur du cadre, l'échelle
+// étant portée par `--dx-hist-max` : une seule valeur à changer si les effectifs
+// évoluent. Les lignes de grille sont positionnées sur la même échelle.
+
+.dx-hist {
+  --dx-hist-max: 40;
+  display: grid;
+  grid-template-columns: 2.4rem 1fr;
+  gap: 0 0.6rem;
+  margin: 0.4rem 0 0;
+}
+
+.dx-hist-yaxis {
+  position: relative;
+  height: 220px;
+  font-family: #{$font-family-monospace};
+  font-size: 0.68rem;
+  color: var(--dx-muted);
+}
+
+.dx-hist-ytick {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  line-height: 1;
+}
+
+.dx-hist-plot {
+  position: relative;
+  height: 220px;
+  border-bottom: 1px solid var(--dx-rule);
+}
+
+// Grille en retrait : elle situe sans concurrencer les marques.
+.dx-hist-grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--dx-hairline);
+  pointer-events: none;
+}
+
+.dx-hist-bins {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.dx-hist-bin {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px; // écart de surface entre marques adjacentes
+}
+
+.dx-hist-bar {
+  flex: 1 1 0;
+  min-width: 3px;
+  max-width: 22px;
+  border-radius: 4px 4px 0 0; // extrémité de donnée arrondie, ancrée à la ligne de base
+  position: relative;
+  transition: filter 120ms ease;
+
+  &:hover,
+  &:focus-visible {
+    filter: brightness(1.08) saturate(1.08);
+  }
+}
+
+// Étiquette directe, réservée aux tranches qui portent le propos.
+.dx-hist-bar[data-label]::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -3px);
+  font-family: #{$font-family-monospace};
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--dx-ink-2);
+  white-space: nowrap;
+}
+
+.dx-hist-xaxis {
+  grid-column: 2;
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.dx-hist-xtick {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  font-family: #{$font-family-monospace};
+  font-size: 0.65rem;
+  color: var(--dx-muted);
+}
+
+.dx-hist-axis-title {
+  grid-column: 2;
+  font-size: 0.74rem;
+  color: var(--dx-muted);
+  text-align: center;
+  margin-top: 0.3rem;
+}
+
+// Repères moyenne / médiane, alignés sur les tranches où ils tombent.
+.dx-hist-markers {
+  grid-column: 2;
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.dx-hist-marker {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--dx-ink-2);
+}
+
+.dx-hist-marker span {
+  display: block;
+  font-family: #{$font-family-monospace};
+}
+
+@media (max-width: 620px) {
+  .dx-hist-xtick,
+  .dx-hist-marker {
+    font-size: 0.58rem;
+  }
+}
+
+// ── Formule affichée ────────────────────────────────────────────────────────
+//
+// Une fraction en CSS plutôt qu'en LaTeX : cela évite de charger MathJax pour une
+// seule expression, et le rendu reste net à toute taille.
+
+.dx-formula {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 1.4rem 0;
+  padding: 1.1rem 1.2rem;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.dx-formula-lhs {
+  font-style: italic;
+  color: var(--dx-ink);
+}
+
+.dx-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: var(--dx-ink-2);
+}
+
+.dx-frac-num {
+  padding: 0 0.5rem 0.3rem;
+}
+
+.dx-frac-den {
+  padding: 0.3rem 0.5rem 0;
+  border-top: 1px solid var(--dx-rule);
+}
+
+// ── Infobulle partagée ──────────────────────────────────────────────────────
+
+.dx-tip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  max-width: 20rem;
+  padding: 0.45rem 0.65rem;
+  background: var(--dx-ink);
+  color: var(--dx-plane);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  border-radius: 4px;
+  transition: opacity 100ms ease;
+}
+
+.dx-tip.dx-on {
+  opacity: 1;
+}
+
+// ── Fac-similé de la source imprimée ────────────────────────────────────────
+//
+// La page « Problèmes de mise en forme » doit d'abord montrer le filetage du PDF, sans
+// quoi la comparaison des deux écritures n'a pas d'arbitre. Le filetage est reproduit en
+// CSS et non par une image : il reste lisible dans les deux thèmes, à toute largeur, et
+// aucune donnée extraite n'entre dans le dépôt.
+
+// Cellule d'angle barrée d'une diagonale, deux légendes de part et d'autre. La diagonale
+// est un dégradé et non une bordure : c'est le seul moyen de tracer un trait en biais
+// dans une cellule de tableau.
+table.dx-grid td.dx-src-corner {
+  min-width: 15rem;
+  padding: 0.5rem 0.6rem;
+  background-image: linear-gradient(
+    to right top,
+    transparent calc(50% - 0.5px),
+    var(--dx-rule) calc(50% - 0.5px),
+    var(--dx-rule) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
+}
+
+.dx-src-corner-top,
+.dx-src-corner-bottom {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--dx-muted);
+}
+
+.dx-src-corner-top {
+  text-align: right;
+}
+
+.dx-src-corner-bottom {
+  text-align: left;
+  margin-top: 1.4rem;
+}
+
+// Trois lignes de texte dans une seule cellule encadrée : c'est tout l'objet de la
+// démonstration, l'intertitre et la raison sociale partagent la cellule.
+.dx-src-inter,
+.dx-src-name {
+  display: block;
+}
+
+.dx-src-inter {
+  color: var(--dx-ink-2);
+  font-weight: 650;
+}
+
+// Les montants du PDF sont alignés sur la dernière ligne de texte de la cellule voisine.
+table.dx-grid td.dx-src-bottom {
+  vertical-align: bottom;
+}
+
+// Colonnes et lignes repliées : l'élision doit se voir, jamais se deviner.
+table.dx-grid tr.dx-src-gap td,
+table.dx-grid td.dx-src-more {
+  background: var(--dx-surface-2);
+  color: var(--dx-muted);
+  font-size: 0.72rem;
+  font-style: italic;
+  text-align: center;
+}
+
+// L'intertitre collé devant la raison sociale, dans le libellé annoté.
+.dx-src-glued {
+  color: var(--dx-st-manquante-ink);
+  font-weight: 650;
+}
+
+// Ligne d'intertitre autonome, telle que le moteur la rend (`<td colspan>`).
+table.dx-grid td.dx-sect {
+  font-weight: 650;
+  color: var(--dx-ink-2);
+  background: var(--dx-accent-soft);
+}
+
+// ── Étapes d'un traitement ──────────────────────────────────────────────────
+
+// Les pages « Du JSON au CSV » et « Évaluation » décrivent une suite d'étapes
+// ordonnées. Elles réutilisent `.dx-finding` — même bloc numéroté — mais leur ligne
+// de tête nomme la fonction qui réalise l'étape et non une mesure : d'où `.dx-fn`,
+// neutre, là où `.dx-impact` porte l'encre d'accent d'un chiffre.
+.dx-fn {
+  font-family: #{$font-family-monospace};
+  font-size: 0.73rem;
+  padding: 0.14rem 0.5rem;
+  border: 1px solid var(--dx-hairline);
+  border-radius: 3px;
+  background: var(--dx-surface);
+  color: var(--dx-ink-2);
+}
+
+// ── Chaîne de traitement ────────────────────────────────────────────────────
+
+// Une étape = une boîte, la flèche entre deux boîtes porte ce qui circule. Le sens
+// de lecture reste vertical à toute largeur : les libellés d'étape sont trop longs
+// pour tenir sur une ligne, et une chaîne en colonne se lit sans défilement latéral.
+.dx-flow {
+  margin: 1.8rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.dx-flow-step {
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+  border-left: 3px solid var(--dx-accent);
+  padding: 0.72rem 0.9rem;
+}
+
+.dx-flow-step.dx-flow-aside {
+  border-left-color: var(--dx-rule);
+  margin-left: 2.2rem;
+}
+
+.dx-flow-name {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.dx-flow-desc {
+  display: block;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  margin-top: 0.15rem;
+}
+
+.dx-flow-code {
+  font-family: #{$font-family-monospace};
+  font-size: 0.73rem;
+  color: var(--dx-muted);
+}
+
+// La flèche porte le format qui circule : c'est l'information la plus utile de la
+// chaîne, davantage que les boîtes elles-mêmes.
+.dx-flow-arrow {
+  padding: 0.32rem 0 0.32rem 0.9rem;
+  font-size: 0.75rem;
+  color: var(--dx-muted);
+  font-family: #{$font-family-monospace};
+
+  &::before {
+    content: "↓";
+    margin-right: 0.5rem;
+    color: var(--dx-rule);
+  }
+}
+
+// ── Blocs de code appariés ──────────────────────────────────────────────────
+
+// Deux sorties de moteur côte à côte, dans un `.dx-pane` chacune. Pandoc enveloppe
+// le contenu d'un div dans un paragraphe : c'est ce paragraphe qui doit porter la
+// répartition, sans quoi le titre et le chemin du fichier restent collés.
+.dx-pane-head > p {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.dx-pane div.sourceCode,
+.dx-pane pre {
+  margin: 0;
+}
+
+.dx-pane pre {
+  max-height: 27rem;
+  overflow: auto;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  background: var(--dx-plane);
+  border: 1px solid var(--dx-hairline);
+  padding: 0.7rem 0.8rem;
+}
+
+// Note de bas de volet : ce qu'il faut regarder dans le code au-dessus.
+.dx-pane-note {
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  margin: 0.7rem 0 0.2rem;
+}
+
+// ── Aperçu du document source, sous les grilles du comparateur ───────────────
+//
+// Replié par défaut : le navigateur ne télécharge l'image qu'à l'ouverture, et une
+// centaine de scans à 2 200 px pèsent trop pour être chargés d'office.
+
+.dx-apercu {
+  margin: 0.6rem 0 1.6rem;
+  background: var(--dx-surface);
+  border: 1px solid var(--dx-hairline);
+}
+
+.dx-apercu-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.86rem;
+  color: var(--dx-ink);
+}
+
+.dx-apercu-summary:hover {
+  background: var(--dx-surface-2);
+}
+
+.dx-apercu-count {
+  font-weight: 400;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+}
+
+.dx-apercu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  padding: 0.4rem 0.9rem 0.2rem;
+}
+
+.dx-apercu-fig {
+  margin: 0;
+}
+
+// Le scan est plus large que haut aussi souvent que l'inverse : on borne la hauteur pour
+// qu'une page portrait n'occupe pas trois écrans, et on laisse défiler ce qui dépasse.
+.dx-apercu-img {
+  display: block;
+  max-width: 100%;
+  max-height: 80vh;
+  margin: 0 auto;
+  background: var(--dx-plane);
+  border: 1px solid var(--dx-rule);
+}
+
+.dx-apercu-cap {
+  margin: 0.4rem 0 0;
+  font-size: 0.79rem;
+  color: var(--dx-ink-2);
+  text-align: center;
+}
+
+.dx-apercu-note {
+  margin: 0.2rem 0 0;
+  padding: 0 0.9rem 0.7rem;
+  font-size: 0.76rem;
+  color: var(--dx-ink-2);
+}

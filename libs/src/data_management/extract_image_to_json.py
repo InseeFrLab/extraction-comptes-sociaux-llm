@@ -4,21 +4,22 @@ import time
 import traceback
 
 import torch
-
+from marker.config.parser import ConfigParser
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
-from marker.config.parser import ConfigParser
 
 from data_management.pdf_to_image import pdf_to_image
 
 
 class PdfConversionError(Exception):
     """Erreur lors de la conversion PDF -> image."""
+
     pass
 
 
 class MarkerConversionError(Exception):
     """Erreur lors de la conversion Marker."""
+
     pass
 
 
@@ -137,9 +138,9 @@ def extract_pdf(pdf_path: str, tmpdir: str, artifact_dict: dict) -> dict:
         # et toute la chaîne de causes pour détecter l'OOM de façon robuste.
         if _is_cuda_oom(e):
             mem = (
-                f"VRAM: {torch.cuda.memory_allocated()/1e9:.2f} Go alloc / "
-                f"{torch.cuda.max_memory_reserved()/1e9:.2f} Go pic reserved / "
-                f"{torch.cuda.get_device_properties(0).total_memory/1e9:.2f} Go total"
+                f"VRAM: {torch.cuda.memory_allocated() / 1e9:.2f} Go alloc / "
+                f"{torch.cuda.max_memory_reserved() / 1e9:.2f} Go pic reserved / "
+                f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} Go total"
             )
             # Libère la VRAM pour que la requête suivante reparte sur un allocateur sain.
             torch.cuda.empty_cache()
@@ -151,7 +152,7 @@ def extract_pdf(pdf_path: str, tmpdir: str, artifact_dict: dict) -> dict:
         raise MarkerConversionError(f"Marker conversion failed: {e}") from e
 
     elapsed = time.time() - start
-    print(f"Extraction terminée en {elapsed:.1f}s ({elapsed/60:.1f} min)")
+    print(f"Extraction terminée en {elapsed:.1f}s ({elapsed / 60:.1f} min)")
 
     # model_dump() peut échouer sur certains champs Set[...] de pydantic v2
     result = json.loads(rendered.model_dump_json())

@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # --- Actions GitHub utilisées par les workflows ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+
+  # --- Dépendances Python (uv.lock) ---
+  # api_centrale n'est pas listé : service legacy sous pip/requirements.txt, hors périmètre.
+  - package-ecosystem: "uv"
+    directories:
+      - "/libs"
+      - "/scripts"
+      - "/api/api_marker"
+      - "/api/marker_proxy"
+      - "/api/api_chandra"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # Un seul PR pour les montées de version mineures/patch, au lieu d'une par paquet.
+      mineur-et-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # torch est épinglé sur l'index CUDA 12.8 (build compatible avec le driver du
+      # cluster). Une montée automatique casserait `torch.cuda.is_available()`.
+      # Cf. le commentaire TEMPORAIRE dans api/api_marker/pyproject.toml.
+      - dependency-name: "torch"
+
+  # --- Images de base des Dockerfiles ---
+  - package-ecosystem: "docker"
+    directories:
+      - "/api/api_marker"
+      - "/api/marker_proxy"
+      - "/api/api_opendataloader"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "docker"

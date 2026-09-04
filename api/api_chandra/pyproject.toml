@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "API d'extraction de tableaux via le VLM Chandra"
 requires-python = ">=3.13"
 dependencies = [
+    # L'API parle directement au serveur vllm : de ce paquet ne restent que
+    # `prompts.PROMPT_MAPPING` et `model.util.detect_repeat_token` (cf. README).
+    "chandra-ocr>=0.2.0",
     "fastapi>=0.136.0",
     "openai>=1.0.0",
     "pillow>=12.2.0",

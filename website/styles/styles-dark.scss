@@ -1,0 +1,66 @@
+/*-- scss:defaults --*/
+
+// Le thème sombre reprend les mêmes rôles, pas une inversion automatique : les pas
+// de la rampe et les teintes de statut sont choisis pour le fond sombre et vérifiés
+// séparément (contraste ≥ 3:1 sur #161b21 pour les marques, ≥ 4,5:1 pour le texte).
+
+$body-bg: #0d1116 !default;
+$body-color: #eef1f4 !default;
+$primary: #7fb4e4 !default;
+$link-color: #7fb4e4 !default;
+$border-color: #252d35 !default;
+$table-border-color: #252d35 !default;
+
+/*-- scss:rules --*/
+
+:root {
+  --dx-plane: #0d1116;
+  --dx-surface: #161b21;
+  --dx-surface-2: #1e242b;
+  --dx-ink: #eef1f4;
+  --dx-ink-2: #a6b2be;
+  --dx-muted: #7e8b97;
+  --dx-hairline: #252d35;
+  --dx-rule: #333c46;
+  --dx-accent: #7fb4e4;
+  --dx-accent-soft: #1b2731;
+
+  // Rampe ordinale : sur fond sombre, plus la valeur est grande, plus le pas est
+  // clair. ΔL ≥ 0,09 entre pas ; le pas le plus proche du fond à 3,92:1.
+  --dx-ord-1: #b7d3f6;
+  --dx-ord-2: #86b6ef;
+  --dx-ord-3: #5598e7;
+  --dx-ord-4: #2a78d6;
+
+  --dx-marker: #3987e5;
+  --dx-chandra: #d95926;
+
+  // Teintes de statut : fonds sourds, encre claire de la même famille.
+  --dx-st-ok-bg: #16301a;
+  --dx-st-ok-ink: #86d68a;
+  --dx-st-format-bg: #322709;
+  --dx-st-format-ink: #e2bb62;
+  --dx-st-ocr-bg: #35200f;
+  --dx-st-ocr-ink: #eda478;
+  --dx-st-deplacee-bg: #142438;
+  --dx-st-deplacee-ink: #8fbdec;
+  --dx-st-manquante-bg: #371818;
+  --dx-st-manquante-ink: #eb9494;
+  --dx-st-differente-bg: #32162a;
+  --dx-st-differente-ink: #dd96bf;
+  --dx-st-nonapp-bg: #1f242a;
+  --dx-st-nonapp-ink: #97a3ae;
+}
+
+.dx-bar-loss {
+  color: #eb9494;
+}
+
+.dx-swatch,
+.dx-chip {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.dx-nodata {
+  border-left-color: #eb9494;
+}
