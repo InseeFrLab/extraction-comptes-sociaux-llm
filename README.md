@@ -340,3 +340,6 @@ config = {
 | Une modif de `libs/src/**` ne change rien au comportement | `extraction-common` installé en **copie figée** dans le venv | `editable = true` dans `[tool.uv.sources]` puis `uv sync`. Vérifier : `uv run python -c "import data_management.extract_image_to_json as m; print(m.__file__)"` doit pointer vers `libs/src/...`, pas vers `.venv/...` |
 | `torch.cuda.is_available() == False` | wheel torch incompatible avec le driver (CUDA build ≠ driver) | Épingler un build torch compatible (voir `pyproject.toml`, index `pytorch-cu128` pour driver CUDA 12.x) |
 | Les tableaux ne sont pas corrigés | `use_llm: False` dans la config | Passer à `use_llm: True` |
+
+
+# test commit 
